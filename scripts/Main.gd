@@ -19,6 +19,7 @@ var tune_panel: TunePanel
 var fog: FogOverlay
 var scenario := 0
 var weather := 0
+var plane_id := Planes.C172     # the aircraft in use
 
 var state := MENU
 var round_no := 0
@@ -92,14 +93,18 @@ func _ready() -> void:
 	add_child(fog)
 	hud = Hud.new()
 	add_child(hud)
+	hud.plane_step.connect(_on_plane_step)
 	if DebugFlags.tune_enabled():
 		tune_panel = TunePanel.new()
 		add_child(tune_panel)
 		tune_panel.build()
 		tune_panel.changed.connect(_on_tuning_changed)
 		tune_panel.skip_round.connect(skip_round)
+	if DebugFlags.plane_forced() >= 0:
+		plane_id = DebugFlags.plane_forced()
 	round_no = DebugFlags.first_round() - 1
-	_begin_round()
+	hud.set_plane_choice(plane_id)
+	_begin_round(false)
 	_snap_camera()
 	if not _warmed:
 		_warmed = true
@@ -166,6 +171,7 @@ func _prewarm() -> void:
 
 func _show_menu() -> void:
 	state = MENU
+	hud.hide_card()
 	hud.show_menu(best)
 	hud.set_flight(0.0, 0.0, 1.0, false)
 	hud.set_hint("")
@@ -182,7 +188,7 @@ func start_run() -> void:
 	hud.hide_overlay()
 	hud.clear_popup()
 	hud.set_score(0)
-	hud.set_strikes(0)
+	hud.set_strikes(0, strikes_max())
 	hud.set_fade_now(0.0)
 	fx.clear()
 	get_tree().paused = false
@@ -193,14 +199,17 @@ func start_run() -> void:
 ## first (the plane waits); tests pass false.
 func _begin_round(card: bool = true) -> void:
 	round_no += 1
-	var pick := Scenarios.pick(round_no, rng, _last_scenario)
+	var pick := Scenarios.pick(round_no, rng, _last_scenario, Planes.scenarios(plane_id), Planes.weather(plane_id))
 	scenario = pick.x
 	weather = pick.y
 	_last_scenario = scenario
+	airfield.set_plane(plane_id)
 	airfield.generate(round_no, rng, scenario, weather)
 	airfield.build()
 	var r := Tuning.ramp(round_no)
 	wind.reset(airfield.wind_base, rng, rng.randf_range(2.0, 3.5))
+	aircraft.apply_plane(plane_id)
+	hud.set_stall(aircraft.stall_speed())
 	aircraft.power = airfield.power
 	aircraft.sink_mult = airfield.sink_mult
 	aircraft.gy = 0.0
@@ -291,6 +300,29 @@ func _terrain_text() -> String:
 		Airfield.HILL:
 			return "hill ahead"
 	return ""
+
+## Crashes allowed in a run: three, but only one for the glider.
+func strikes_max() -> int:
+	return mini(Tuning.strikes_max, Planes.attempts(plane_id))
+
+## Switch aircraft (the menu / game-over selector). Takes effect on the next approach.
+func select_plane(id: int) -> void:
+	plane_id = clampi(id, 0, Planes.COUNT - 1)
+	aircraft.apply_plane(plane_id)
+	hud.set_plane_choice(plane_id)
+	hud.set_strikes(strikes, strikes_max())
+
+## The aircraft you may pick (all of them for now; the career unlocks them one by one).
+func available_planes() -> Array[int]:
+	var out: Array[int] = []
+	for i in Planes.COUNT:
+		out.append(i)
+	return out
+
+func _on_plane_step(dir: int) -> void:
+	var list := available_planes()
+	var i := list.find(plane_id)
+	select_plane(list[posmod(i + dir, list.size())])
 
 ## ?tune "Next round" and tests: abandon this approach and fly a new one.
 func skip_round() -> void:
@@ -420,7 +452,7 @@ func _step_approach(dt: float) -> void:
 	var h := dt / float(n)
 	for i in n:
 		aircraft.gy = airfield.ground_y(aircraft.x)
-		aircraft.step_air(h, wind.head(), wind.v_total(), wind.h_total())
+		aircraft.step_air(h, wind.head(), wind.v_total() * aircraft.p_gust, wind.h_total() * aircraft.p_gust)
 		# trees / hill / the stern of the carrier or truck
 		var obstacle := airfield.height_at(aircraft.x)
 		if obstacle > 0.0 and aircraft.y < obstacle and not DebugFlags.god_enabled():
@@ -473,7 +505,7 @@ func _overrun_text() -> String:
 
 func _step_rollout(dt: float) -> void:
 	wind.update(dt, rng, _gust_scale * 0.3)
-	var decel := airfield.surface_decel()
+	var decel := airfield.surface_decel() * aircraft.p_decel
 	var n := maxi(ceili(dt / Tuning.sim_step), 1)
 	var h := dt / float(n)
 	for i in n:
@@ -566,7 +598,7 @@ func _crash(reason: String) -> void:
 		landings -= 1
 		hud.set_score(score)
 	_awarded = 0
-	hud.set_strikes(strikes)
+	hud.set_strikes(strikes, strikes_max())
 	hud.popup("CRASH", reason, Color(1.0, 0.35, 0.3), Tuning.crash_pause)
 	hud.set_hint("")
 	fx.crash(Vector3(aircraft.x, maxf(aircraft.y, aircraft.gy) + 1.5, 0.5))
@@ -581,7 +613,7 @@ func _crash(reason: String) -> void:
 	_timer = 0.0
 
 func _leave_crash() -> void:
-	_finish_round(strikes >= Tuning.strikes_max)
+	_finish_round(strikes >= strikes_max())
 
 ## The landing (or crash) is over: fade out, then a new approach (or the end of the run).
 func _finish_round(over: bool) -> void:
@@ -728,6 +760,8 @@ func _input(event: InputEvent) -> void:
 	if event is InputEventScreenTouch and event.pressed:
 		if state == CARD and _timer > 0.35:
 			_end_card()
+		elif hud.over_selector(event.position):
+			pass
 		elif state == MENU and not _warming:
 			_run_start_ms = Time.get_ticks_msec()
 			_paused_total_ms = 0

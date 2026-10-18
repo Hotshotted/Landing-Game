@@ -12,6 +12,7 @@ extends RefCounted
 ##   ?seed=N                                           fixed random seed (same rounds every run)
 ##   ?scenario=short|engineout|night|mountain|carrier|water|truck|standard   force that scenario every approach
 ##   ?weather=fog|rain|turbulence|shear|clear          force that weather every approach
+##   ?plane=cub|172|twin|glider|jet                    start in that aircraft
 ## Combine with "&", e.g.  ?nofx=smoke&noprewarm&perf
 ## The active flags are printed under the build stamp.
 
@@ -28,6 +29,7 @@ static var start_round := 1
 static var seed_value := -1
 static var scenario_value := -1
 static var weather_value := -1
+static var plane_value := -1
 
 ## True if the named effect has been switched off.
 static func off(effect: String) -> bool:
@@ -66,6 +68,10 @@ static func weather_forced() -> int:
 	_load()
 	return weather_value
 
+static func plane_forced() -> int:
+	_load()
+	return plane_value
+
 ## One-line description of the active flags ("" when none), shown next to the build stamp.
 static func summary() -> String:
 	_load()
@@ -92,6 +98,8 @@ static func summary() -> String:
 		parts.append("scenario=" + Scenarios.KEYS[scenario_value])
 	if weather_value >= 0:
 		parts.append("weather=" + Scenarios.WX_KEYS[weather_value])
+	if plane_value >= 0:
+		parts.append("plane=" + Planes.KEYS[plane_value])
 	for b in _bad:
 		parts.append("?" + b)
 	return " ".join(parts)
@@ -122,6 +130,7 @@ static func parse(args: Array[String]) -> void:
 	seed_value = -1
 	scenario_value = -1
 	weather_value = -1
+	plane_value = -1
 	for a in args:
 		var kv := a.split("=", true, 1)
 		var key := kv[0].uri_decode().to_lower()
@@ -152,6 +161,10 @@ static func parse(args: Array[String]) -> void:
 				scenario_value = Scenarios.scenario_from_key(val)
 				if scenario_value < 0:
 					_bad.append("scenario=" + val)
+			"plane":
+				plane_value = Planes.from_key(val)
+				if plane_value < 0:
+					_bad.append("plane=" + val)
 			"weather":
 				weather_value = Scenarios.weather_from_key(val)
 				if weather_value < 0:

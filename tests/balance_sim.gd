@@ -39,15 +39,13 @@ func _init() -> void:
 	await process_frame
 	main.test_mode = true
 	SV.enabled = false
-	for scn in range(8):
-		SC.forced_scenario = scn
-		SC.forced_weather = 0
-		for fh in [2.5, 4.0]:
-			report("%-10s smart from %.1f" % [SC.KEYS[scn], fh], fh, 0.0)
 	SC.forced_scenario = 0
-	for wx in range(1, 5):
-		SC.forced_weather = wx
-		report("std + %-10s" % SC.WX_KEYS[wx], 3.0, 0.0)
+	SC.forced_weather = 0
+	for pl in [0, 3]:
+		main.select_plane(pl)
+		for fh in [2.0, 3.0]:
+			report("%-7s smart from %.1f" % [["cub", "172", "twin", "glider", "jet"][pl], fh], fh, 0.0)
+	main.select_plane(1)
 	quit()
 
 func report(label: String, flare_h: float, flare_theta: float) -> void:
@@ -56,7 +54,7 @@ func report(label: String, flare_h: float, flare_theta: float) -> void:
 	var total := 0
 	var sinks := 0.0
 	var offs := 0.0
-	var n := 20
+	var n := 14
 	for i in n:
 		main.rng.seed = 1000 + i
 		main.start_run()
@@ -92,15 +90,15 @@ func fly(flare_h: float, flare_theta: float) -> String:
 		var m: float = af.slope_at(ac.x)
 		var agl: float = ac.agl()
 		var cmd: float = 0.0
-		var power_trim: float = float(tn.trim_sink) * float(ac.sink_mult)
+		var power_trim: float = ac.trim_sink()
 		if flare_h < 0.0 or agl > flare_h:
 			var closing: float = maxf(gs - float(af.deck_speed), 4.0)
 			var t_go: float = maxf((af.aim_x + aim_bias - ac.x) / closing, 0.5)
-			var want_rel: float = clampf(-agl / t_go, -5.0, -2.5)
-			cmd = (want_rel + gs * m + power_trim) / float(tn.pitch_lift_gain)
+			var want_rel: float = clampf(-agl / t_go, -5.0, -0.7 * ac.trim_sink())
+			cmd = (want_rel + gs * m + power_trim) / ac.lift_gain()
 		else:
 			var want: float = -(0.25 + 0.3 * agl) + gs * m
-			cmd = (want + power_trim) / float(tn.pitch_lift_gain)
+			cmd = (want + power_trim) / ac.lift_gain()
 		var dy: float = -(cmd - ac.theta_target) / (float(tn.pitch_per_pixel) * float(tn.sensitivity))
 		ac.touching = true
 		ac.add_drag(dy)

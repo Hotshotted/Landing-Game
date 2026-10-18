@@ -44,6 +44,11 @@ const RWY_HALF_DEPTH := 6.0
 # ---- the round (set by generate()) ----
 var scenario := 0
 var weather := 0
+# the aircraft this round is for (its speed and sink change the glide path; it may need a long runway or have no engine)
+var plane_speed := 1.0
+var plane_sink := 1.0
+var plane_min_len := 0.0
+var plane_power := 1.0
 var surface := ASPHALT
 var terrain := FLAT
 var thr := 0.0          # runway threshold (x) - moves with a carrier / truck
@@ -351,6 +356,14 @@ func _place(m: Node3D, pos: Vector3, size: Vector3) -> void:
 	m.scale = size
 	m.visible = true
 
+## The aircraft the next round is generated for.
+func set_plane(id: int) -> void:
+	var pr: Dictionary = Planes.profile(id)
+	plane_speed = pr["speed"]
+	plane_sink = pr["sink"]
+	plane_min_len = pr["min_len"]
+	plane_power = pr["power"]
+
 ## Choose the round: scenario, surface, length, terrain, wind, weather, where the approach starts and how it misses
 ## the markers.
 func generate(round_no: int, rng: RandomNumberGenerator, scn: int = 0, wx: int = 0) -> void:
@@ -363,7 +376,7 @@ func generate(round_no: int, rng: RandomNumberGenerator, scn: int = 0, wx: int =
 	deck_off = 0.0
 	has_wires = false
 	night = scn == Scenarios.NIGHT
-	power = 0.0 if scn == Scenarios.ENGINE_OUT else 1.0
+	power = 0.0 if (scn == Scenarios.ENGINE_OUT or plane_power == 0.0) else 1.0
 	sink_mult = Tuning.engine_out_sink_mult if scn == Scenarios.ENGINE_OUT else 1.0
 	wet = wx == Scenarios.RAIN
 	vis_end = 0.0
@@ -406,6 +419,10 @@ func generate(round_no: int, rng: RandomNumberGenerator, scn: int = 0, wx: int =
 			rwy_len = rng.randf_range(Tuning.truck_len_min, Tuning.truck_len_max)
 			deck_h = Tuning.truck_height
 			deck_speed = rng.randf_range(Tuning.truck_speed_min, Tuning.truck_speed_max)
+	# a fast aircraft needs a long paved runway
+	if plane_min_len > 0.0 and (scn == Scenarios.STANDARD or scn == Scenarios.ENGINE_OUT or scn == Scenarios.NIGHT):
+		surface = ASPHALT
+		rwy_len = maxf(rwy_len, plane_min_len)
 	# terrain: nothing in the first rounds; only the standard and short-field approaches have obstacles
 	terrain = FLAT
 	if scn == Scenarios.SHORT_FIELD:
@@ -433,7 +450,7 @@ func generate(round_no: int, rng: RandomNumberGenerator, scn: int = 0, wx: int =
 		Scenarios.SHEAR:
 			shear_back = rng.randf_range(35.0, 60.0)
 	# the plain approach path: sink / ground speed
-	path_slope = Tuning.trim_sink * sink_mult / maxf(Tuning.approach_speed - wind_base, 6.0)
+	path_slope = Tuning.trim_sink * sink_mult * plane_sink / maxf(Tuning.approach_speed * plane_speed - wind_base, 6.0)
 	start_altitude = rng.randf_range(Tuning.start_altitude_min, Tuning.start_altitude_max) + deck_h
 	aim_off = clampf(rwy_len * Tuning.aim_fraction, Tuning.aim_min, Tuning.aim_max)
 	if scn == Scenarios.TRUCK:
@@ -475,7 +492,7 @@ func generate(round_no: int, rng: RandomNumberGenerator, scn: int = 0, wx: int =
 			hill_h = clampf(minf(hill_h, (aim_off - hill_x) * comfy - 2.5), 3.0, 9.0)
 	# where the plain approach path would touch down relative to the markers: random, but never under the obstacles;
 	# an engine-out glide comes in short (you have to stretch it)
-	if scn == Scenarios.ENGINE_OUT:
+	if power == 0.0:
 		path_error = rng.randf_range(-emax * 0.9, emax * 0.15)
 	else:
 		path_error = rng.randf_range(-emax, emax)
@@ -489,7 +506,7 @@ func generate(round_no: int, rng: RandomNumberGenerator, scn: int = 0, wx: int =
 	# Where the threshold has to be at the moment of touchdown so the plain path meets the ground (or the deck, or the
 	# slope) path_error from the markers; a moving deck is started further back by how far it travels meanwhile.
 	var lead := 25.0 if slope_m > 0.0 else 0.0
-	var gs_nom := maxf(Tuning.approach_speed - wind_base, 6.0)
+	var gs_nom := maxf(Tuning.approach_speed * plane_speed - wind_base, 6.0)
 	var thr0 := 0.0
 	for attempt in 8:
 		var s := path_slope

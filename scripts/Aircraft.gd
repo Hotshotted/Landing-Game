@@ -23,6 +23,19 @@ var power := 1.0        # 1 = engine running, 0 = engine out (no speed recovery,
 var sink_mult := 1.0    # multiplies the approach sink rate (an engine-out glide is steeper)
 var gy := 0.0           # height of the ground under the plane (mountain slope, carrier deck, truck bed)
 var ground_tilt := 0.0  # slope of that ground in degrees (the drawn plane follows it while rolling)
+# handling profile (multipliers on the Tuning values; set by apply_plane)
+var plane_id := 1
+var p_speed := 1.0
+var p_sink := 1.0
+var p_lift := 1.0
+var p_response := 1.0
+var p_bleed := 1.0
+var p_recover := 1.0
+var p_stall := 1.0
+var p_ge := 1.0
+var p_decel := 1.0
+var p_gust := 1.0
+var _model_scale := 1.0
 var _wobble_v := 0.0
 var _pending_drag := 0.0
 var _vis_pitch := 0.0
@@ -30,6 +43,17 @@ var _view_scale := 1.0   # drawn bigger when the camera is zoomed far out, so th
 var _pivot: Node3D
 var _prop: Node3D
 var _outline: ShaderMaterial
+var _body_mats: Array[StandardMaterial3D] = []    # painted with the aircraft's body colour
+var _accent_mats: Array[StandardMaterial3D] = []  # ... and its accent colour
+var _p_fuselage: MeshInstance3D
+var _p_nose: MeshInstance3D
+var _p_tail: MeshInstance3D
+var _p_wing: MeshInstance3D
+var _p_tailplane: MeshInstance3D
+var _p_fin: MeshInstance3D
+var _twin: Array[Node3D] = []      # the second pair of engines
+var _prop2: Node3D
+var _prop3: Node3D
 var _gear: Array[Node3D] = []     # wheels and struts, hidden when the plane has floats (seaplane)
 var _floats: Array[Node3D] = []
 var _nav: Array[MeshInstance3D] = []   # navigation lights (shown at night)
@@ -62,11 +86,11 @@ func clear_input() -> void:
 func reset(start_x: float, start_y: float) -> void:
 	x = start_x
 	y = start_y
-	vy = -Tuning.trim_sink * sink_mult
+	vy = -trim_sink()
 	s = 1.0
 	theta = 0.0
 	theta_target = 0.0
-	gs = Tuning.approach_speed
+	gs = air_speed()
 	on_ground = false
 	wobble = 0.0
 	_wobble_v = 0.0
@@ -87,20 +111,20 @@ func consume_input(dt: float) -> void:
 ## One flight sub-step. `head` = total headwind, `gust_v` / `gust_h` = the current gust. Moves x and y.
 func step_air(h: float, head: float, gust_v: float, gust_h: float) -> void:
 	theta = move_toward(theta, theta_target, Tuning.pitch_rate * h)
-	s += (Tuning.speed_recover * power * (1.0 - s) - Tuning.speed_bleed * theta / 10.0 - (1.0 - power) * Tuning.engine_out_drag) * h
+	s += (Tuning.speed_recover * p_recover * power * (1.0 - s) - Tuning.speed_bleed * p_bleed * theta / 10.0 - (1.0 - power) * Tuning.engine_out_drag * (0.4 if p_recover == 0.0 else 1.0)) * h
 	s = clampf(s, 0.2, 1.5)
 	var s_eff := s + gust_h * Tuning.gust_airspeed_effect
-	var target := -Tuning.trim_sink * sink_mult + Tuning.pitch_lift_gain * theta * clampf(s_eff, 0.0, 1.2)
-	target -= maxf(Tuning.stall_speed - s_eff, 0.0) * Tuning.stall_sink_gain
+	var target := -trim_sink() + Tuning.pitch_lift_gain * p_lift * theta * clampf(s_eff, 0.0, 1.2)
+	target -= maxf(stall_speed() - s_eff, 0.0) * Tuning.stall_sink_gain
 	var agl := y - gy
 	if agl < Tuning.ground_effect_height:
-		target += Tuning.ground_effect_lift * (1.0 - maxf(agl, 0.0) / Tuning.ground_effect_height)
+		target += Tuning.ground_effect_lift * p_ge * (1.0 - maxf(agl, 0.0) / Tuning.ground_effect_height)
 	target += gust_v
 	if y >= Tuning.max_altitude:
 		target = minf(target, -1.0)
-	vy += (target - vy) * (1.0 - exp(-h / maxf(Tuning.response_time, 0.01)))
+	vy += (target - vy) * (1.0 - exp(-h / maxf(Tuning.response_time * p_response, 0.01)))
 	y += vy * h
-	gs = maxf(Tuning.approach_speed * s - head, 4.0)
+	gs = maxf(air_speed() * s - head, 4.0)
 	x += gs * h
 	_wobble_v += (-60.0 * wobble - 6.0 * _wobble_v) * h
 	wobble += _wobble_v * h
@@ -129,6 +153,61 @@ func step_ground(h: float, decel: float, floor_speed: float = 0.0) -> void:
 func kick(sign_dir: float) -> void:
 	_wobble_v += sign_dir * Tuning.gust_wobble * 6.0
 
+## Choose the aircraft: its handling profile and its model.
+func apply_plane(id: int) -> void:
+	plane_id = clampi(id, 0, Planes.COUNT - 1)
+	var pr: Dictionary = Planes.profile(plane_id)
+	p_speed = pr["speed"]
+	p_sink = pr["sink"]
+	p_lift = pr["lift"]
+	p_response = pr["response"]
+	p_bleed = pr["bleed"]
+	p_recover = pr["recover"]
+	p_stall = pr["stall"]
+	p_ge = pr["ge"]
+	p_decel = pr["decel"]
+	p_gust = pr["gust"]
+	_model_scale = pr["scale"]
+	paint(pr["body"], pr["accent"])
+	# model: reset to the 172, then reshape
+	_p_fuselage.scale = Vector3(5.0, 1.2, 1.2)
+	_p_nose.scale = Vector3(1.4, 1.4, 1.4)
+	_p_nose.position = Vector3(3.2, 0.0, 0.0)
+	_p_wing.scale = Vector3(1.8, 0.18, 9.0)
+	_p_tailplane.scale = Vector3(1.0, 0.14, 3.6)
+	_p_fin.scale = Vector3(1.7, 1.9, 0.18)
+	_prop.visible = true
+	for t in _twin:
+		t.visible = false
+	match int(pr["kind"]):
+		2:   # twin: wider wing, two engines (the nose engine goes)
+			_p_wing.scale = Vector3(2.0, 0.2, 11.0)
+			_prop.visible = false
+			for t in _twin:
+				t.visible = true
+			_p_nose.scale = Vector3(1.5, 1.3, 1.3)
+		3:   # glider: long thin wing, slim fuselage, no propeller
+			_p_wing.scale = Vector3(1.3, 0.14, 18.0)
+			_p_fuselage.scale = Vector3(5.0, 0.9, 0.9)
+			_p_nose.scale = Vector3(1.2, 1.0, 1.0)
+			_p_tailplane.scale = Vector3(0.9, 0.12, 4.4)
+			_prop.visible = false
+		4:   # jet: short stubby wing, long pointed nose, big fin, no propeller
+			_p_wing.scale = Vector3(2.4, 0.14, 6.4)
+			_p_fuselage.scale = Vector3(5.6, 1.1, 1.1)
+			_p_nose.scale = Vector3(2.0, 1.1, 1.1)
+			_p_nose.position = Vector3(3.6, 0.0, 0.0)
+			_p_fin.scale = Vector3(2.2, 2.4, 0.2)
+			_prop.visible = false
+	update_visual(0.0)
+
+## Repaint: `body` is the fuselage colour, `accent` the nose / wings / tail (cosmetic paint schemes use this too).
+func paint(body: Color, accent: Color) -> void:
+	for m in _body_mats:
+		m.albedo_color = body
+	for m in _accent_mats:
+		m.albedo_color = accent
+
 ## Seaplane: floats instead of wheels.
 func set_floats(on: bool) -> void:
 	for g in _gear:
@@ -140,6 +219,19 @@ func set_floats(on: bool) -> void:
 func set_night(on: bool) -> void:
 	for n in _nav:
 		n.visible = on
+
+## The approach sink rate, airspeed, stall speed (as a fraction of the approach speed) and pitch lift for this plane.
+func trim_sink() -> float:
+	return Tuning.trim_sink * sink_mult * p_sink
+
+func air_speed() -> float:
+	return Tuning.approach_speed * p_speed
+
+func stall_speed() -> float:
+	return Tuning.stall_speed * p_stall
+
+func lift_gain() -> float:
+	return Tuning.pitch_lift_gain * p_lift
 
 ## Height above the ground under the plane.
 func agl() -> float:
@@ -159,10 +251,13 @@ func update_visual(dt: float) -> void:
 	else:
 		_vis_pitch = lerpf(_vis_pitch, goal, 1.0 - exp(-10.0 * dt))
 		_pivot.rotation.z = deg_to_rad(_vis_pitch + wobble)
-	_pivot.scale = Vector3.ONE * _view_scale
-	_pivot.position = Vector3(x, y + GEAR_H * _view_scale, 0.0)   # (the tyres stay on the ground however big it is drawn)
+	var sc := _view_scale * _model_scale
+	_pivot.scale = Vector3.ONE * sc
+	_pivot.position = Vector3(x, y + GEAR_H * sc, 0.0)   # (the tyres stay on the ground however big it is drawn)
 	if power > 0.0:
 		_prop.rotation.x += 45.0 * dt
+		_prop2.rotation.x += 45.0 * dt
+		_prop3.rotation.x -= 45.0 * dt
 
 # ---------- model ----------
 
@@ -170,13 +265,13 @@ func _build_model() -> void:
 	var white := Color(0.96, 0.94, 0.88)
 	var red := Color(0.86, 0.2, 0.18)
 	var dark := Color(0.16, 0.16, 0.18)
-	_part(BoxMesh.new(), Vector3(5.0, 1.2, 1.2), Vector3(0.0, 0.0, 0.0), white)               # fuselage
-	_part(_cone(), Vector3(1.4, 1.4, 1.4), Vector3(3.2, 0.0, 0.0), red, Vector3(0, 0, -90))      # nose (apex +x)
-	_part(_cone(), Vector3(1.2, 1.2, 1.2), Vector3(-3.1, 0.0, 0.0), white, Vector3(0, 0, 90))    # tail cone (apex -x)
-	_part(BoxMesh.new(), Vector3(1.8, 0.18, 9.0), Vector3(0.3, -0.25, 0.0), red)               # wing
-	_part(BoxMesh.new(), Vector3(1.0, 0.14, 3.6), Vector3(-3.5, 0.35, 0.0), red)               # tailplane
+	_p_fuselage = _part(BoxMesh.new(), Vector3(5.0, 1.2, 1.2), Vector3(0.0, 0.0, 0.0), white, Vector3.ZERO, "body")               # fuselage
+	_p_nose = _part(_cone(), Vector3(1.4, 1.4, 1.4), Vector3(3.2, 0.0, 0.0), red, Vector3(0, 0, -90), "accent")      # nose (apex +x)
+	_p_tail = _part(_cone(), Vector3(1.2, 1.2, 1.2), Vector3(-3.1, 0.0, 0.0), white, Vector3(0, 0, 90), "body")    # tail cone (apex -x)
+	_p_wing = _part(BoxMesh.new(), Vector3(1.8, 0.18, 9.0), Vector3(0.3, -0.25, 0.0), red, Vector3.ZERO, "accent")               # wing
+	_p_tailplane = _part(BoxMesh.new(), Vector3(1.0, 0.14, 3.6), Vector3(-3.5, 0.35, 0.0), red, Vector3.ZERO, "accent")               # tailplane
 	var fin := PrismMesh.new()
-	_part(fin, Vector3(1.7, 1.9, 0.18), Vector3(-3.5, 1.4, 0.0), red)                          # fin
+	_p_fin = _part(fin, Vector3(1.7, 1.9, 0.18), Vector3(-3.5, 1.4, 0.0), red, Vector3.ZERO, "accent")                          # fin
 	_part(BoxMesh.new(), Vector3(1.3, 0.55, 1.0), Vector3(0.9, 0.85, 0.0), Color(0.55, 0.8, 0.95)) # canopy
 	_gear.append(_part(BoxMesh.new(), Vector3(0.14, 0.9, 0.14), Vector3(0.5, -0.85, 0.5), dark))             # main gear struts
 	_gear.append(_part(BoxMesh.new(), Vector3(0.14, 0.9, 0.14), Vector3(0.5, -0.85, -0.5), dark))
@@ -213,6 +308,25 @@ func _build_model() -> void:
 	blade.scale = Vector3(0.1, 2.3, 0.24)
 	blade.material_override = _mat(dark)
 	_prop.add_child(blade)
+	# twin: two engine nacelles on the wings, each with a propeller (hidden unless the aircraft is the twin)
+	for side in [-1.0, 1.0]:
+		var nac := _part(BoxMesh.new(), Vector3(1.9, 0.85, 0.85), Vector3(1.2, -0.3, side * 2.6), dark)
+		nac.visible = false
+		_twin.append(nac)
+		var pr := Node3D.new()
+		pr.position = Vector3(2.3, -0.3, side * 2.6)
+		_pivot.add_child(pr)
+		var bl := MeshInstance3D.new()
+		bl.mesh = BoxMesh.new()
+		bl.scale = Vector3(0.1, 1.9, 0.22)
+		bl.material_override = _mat(dark)
+		pr.add_child(bl)
+		pr.visible = false
+		_twin.append(pr)
+		if side < 0.0:
+			_prop2 = pr
+		else:
+			_prop3 = pr
 
 func _cone() -> CylinderMesh:
 	var c := CylinderMesh.new()
@@ -238,10 +352,15 @@ func _mat(c: Color) -> StandardMaterial3D:
 	m.roughness = 1.0
 	return m
 
-func _part(mesh: Mesh, size: Vector3, pos: Vector3, color: Color, rot_deg: Vector3 = Vector3.ZERO) -> MeshInstance3D:
+func _part(mesh: Mesh, size: Vector3, pos: Vector3, color: Color, rot_deg: Vector3 = Vector3.ZERO, role: String = "") -> MeshInstance3D:
 	var mi := MeshInstance3D.new()
 	mi.mesh = mesh
-	mi.material_override = _mat(color)
+	var pm := _mat(color)
+	mi.material_override = pm
+	if role == "body":
+		_body_mats.append(pm)
+	elif role == "accent":
+		_accent_mats.append(pm)
 	mi.material_overlay = _outline
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	mi.position = pos

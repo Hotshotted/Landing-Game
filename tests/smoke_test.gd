@@ -810,7 +810,8 @@ func run_all() -> void:
 	# --- forcing (the ?tune panel and ?scenario= / ?weather=)
 	DF.parse(["scenario=night", "weather=fog"] as Array[String])
 	check(DF.scenario_forced() == 3 and DF.weather_forced() == 1, "?scenario=night&weather=fog parse")
-	DF.parse(["scenario=nonsense"] as Array[String])
+	DF.parse(["plane=jet", "scenario=nonsense"] as Array[String])
+	check(DF.plane_forced() == 4, "?plane=jet parses")
 	check(DF.summary().contains("nonsense"), "a typo'd scenario shows in the flag summary")
 	DF.parse([] as Array[String])
 	force(5, 0)
@@ -1173,6 +1174,159 @@ func run_all() -> void:
 	force(-1, -1)
 	root.size = Vector2i(1152, 648)
 
+	print("== 15. aircraft ==  [nodes %d]" % nodes())
+	root.size = Vector2i(540, 960)
+	await frames(2)
+	force(0, 0)
+	var PL = load("res://scripts/Planes.gd")
+	var spd: Array[float] = []
+	var stop_d: Array[float] = []
+	var gust_dev: Array[float] = []
+	var flare_t: Array[float] = []
+	for pl in 5:
+		main.select_plane(pl)
+		new_round(1000 + pl, 5)
+		spd.append(float(main.aircraft.gs))
+		# braking: roll out from the same speed on a very long runway
+		main.airfield.rwy_end = 100000.0
+		main.airfield.surface = AF.ASPHALT
+		main.airfield.wet = false
+		main.aircraft.land()
+		main.state = MAIN.ROLLOUT
+		main.aircraft.gs = 25.0
+		var x0: float = main.aircraft.x
+		for i in 1200:
+			main.advance(1.0 / 60.0)
+			if main.aircraft.gs < 0.5 or main.state != MAIN.ROLLOUT:
+				break
+		stop_d.append(float(main.aircraft.x) - x0)
+		# gusts: the same updraft pushes the light plane more
+		var ag = main.aircraft
+		ag.reset(0.0, 60.0)
+		for i in 100:
+			ag.step_air(0.01, 0.0, 2.0 * float(ag.p_gust), 0.0)
+		gust_dev.append(absf(float(ag.vy) + ag.trim_sink()))
+		# the same flare: how long until the wheels touch (the floaty ones hang in the air)
+		ag.reset(0.0, 2.5)
+		ag.vy = -ag.trim_sink()
+		ag.gy = 0.0
+		ag.theta_target = 5.0
+		var tt := 0.0
+		while ag.y > 0.0 and tt < 12.0:
+			ag.step_air(0.01, 0.0, 0.0, 0.0)
+			tt += 0.01
+		flare_t.append(tt)
+	print("      ground speed: %s | roll-out from 25: %s | gust effect: %s | flare->touch: %s" % [str(spd.map(func(v): return snappedf(v, 0.1))), str(stop_d.map(func(v): return snappedf(v, 0.1))), str(gust_dev.map(func(v): return snappedf(v, 0.01))), str(flare_t.map(func(v): return snappedf(v, 0.01)))])
+	check(spd[0] < spd[1] and spd[1] < spd[2] and spd[2] < spd[4], "speeds: cub < 172 < twin < jet (%.0f < %.0f < %.0f < %.0f)" % [spd[0], spd[1], spd[2], spd[4]])
+	check(spd[3] > spd[0] and spd[3] < spd[1], "...the glider sits between the cub and the 172 (%.0f)" % spd[3])
+	check(stop_d[0] < stop_d[1] and stop_d[1] < stop_d[2] and stop_d[2] < stop_d[4], "the cub stops shortest, the jet needs the most (%.0f < %.0f < %.0f < %.0f)" % [stop_d[0], stop_d[1], stop_d[2], stop_d[4]])
+	check(gust_dev[4] < gust_dev[1] * 0.7 and gust_dev[0] > gust_dev[1], "the jet shrugs off gusts, the cub is bumped about (%.2f vs %.2f vs %.2f)" % [gust_dev[4], gust_dev[1], gust_dev[0]])
+	check(flare_t[0] > flare_t[1] * 1.15, "the cub floats longer than the 172 in the same flare (%.2f s vs %.2f s)" % [flare_t[0], flare_t[1]])
+	check(flare_t[3] > flare_t[1] * 1.3, "the glider floats longest (%.2f s)" % flare_t[3])
+	# power, attempts, strikes
+	main.select_plane(PL.GLIDER)
+	new_round(1010, 5)
+	check(main.aircraft.power == 0.0 and main.airfield.power == 0.0, "the glider has no engine")
+	check(main.strikes_max() == 1 and not main.hud._strikes[1].visible, "...and one attempt (one strike pip)")
+	main.aircraft.reset(main.airfield.rwy_end + 10.0, 20.0)
+	main.advance(0.1)
+	main._leave_crash()
+	check(main._after_fade_over, "...the first crash ends the run")
+	main.select_plane(PL.C172)
+	check(main.strikes_max() == 3 and main.hud._strikes[2].visible, "the 172 gets three")
+	# only suitable scenarios and weather are offered
+	force(-1, -1)
+	var ok_all := true
+	var jet_carrier := false
+	var c172_carrier := false
+	var offered := {}
+	for pl in 5:
+		offered[pl] = {}
+		var allowed: Array[int] = PL.scenarios(pl)
+		var allowed_wx: Array[int] = PL.weather(pl)
+		var rr := RandomNumberGenerator.new()
+		rr.seed = 99 + pl
+		var lastp := -1
+		for rn in range(3, 103):
+			var pk: Vector2i = SC.pick(rn, rr, lastp, allowed, allowed_wx)
+			lastp = pk.x
+			offered[pl][pk.x] = true
+			if not allowed.has(pk.x) or not allowed_wx.has(pk.y):
+				ok_all = false
+			if pl == PL.JET and pk.x == 5:
+				jet_carrier = true
+			if pl == PL.C172 and pk.x == 5:
+				c172_carrier = true
+	check(ok_all, "every aircraft is only offered scenarios and weather that suit it")
+	check(jet_carrier and not c172_carrier, "the jet gets the carrier, the 172 never does")
+	check(offered[PL.TWIN].size() == 3 and offered[PL.GLIDER].has(0) and not offered[PL.GLIDER].has(3) and not offered[PL.GLIDER].has(6), "the twin is offered 3 scenarios; the glider no night and no water")
+	var glider_rain := false
+	var rg := RandomNumberGenerator.new()
+	rg.seed = 5
+	for rn in range(3, 200):
+		if SC.pick(rn, rg, -1, PL.scenarios(PL.GLIDER), PL.weather(PL.GLIDER)).y == 2:
+			glider_rain = true
+	check(not glider_rain, "...and the glider never flies in rain")
+	force(0, 0)
+	# long runways for the fast ones
+	var min_ok := true
+	for pl in [PL.TWIN, PL.JET]:
+		main.select_plane(pl)
+		var need: float = PL.profile(pl)["min_len"]
+		for i in 10:
+			new_round(1020 + i, 4)
+			if main.scenario != 5 and main.airfield.rwy_len < need - 0.5:
+				min_ok = false
+			if main.scenario != 5 and main.airfield.surface != AF.ASPHALT and main.scenario in [0, 2, 3]:
+				min_ok = false
+	check(min_ok, "the twin and the jet are only given long paved runways")
+	# every aircraft can be landed (a good approach, all five)
+	var landed_by := []
+	for pl in 5:
+		main.select_plane(pl)
+		var okc := 0
+		for i in 8:
+			force(0, 0)
+			new_round(1040 + i, 5)
+			if not fly_g(3.0)["crash"]:
+				okc += 1
+		landed_by.append(okc)
+	print("      landed with a good approach, 8 tries each: %s" % str(landed_by))
+	var all_ok := true
+	for v in landed_by:
+		if v < 5:
+			all_ok = false
+	check(all_ok, "every aircraft can be landed (at least 5 of 8 each)")
+	main.select_plane(PL.C172)
+	# models
+	main.select_plane(PL.GLIDER)
+	check(not main.aircraft._prop.visible and main.aircraft._p_wing.scale.z > 15.0, "the glider: no propeller, a very long wing")
+	main.select_plane(PL.TWIN)
+	check(main.aircraft._twin[0].visible and not main.aircraft._prop.visible, "the twin: two engines")
+	main.select_plane(PL.JET)
+	check(not main.aircraft._prop.visible and not main.aircraft._twin[0].visible, "the jet: no propellers")
+	main.select_plane(PL.CUB)
+	var cub_col: Color = main.aircraft._body_mats[0].albedo_color
+	main.select_plane(PL.C172)
+	check(main.aircraft._prop.visible and main.aircraft._body_mats[0].albedo_color != cub_col and not main.aircraft._twin[0].visible, "each aircraft has its own paint and model (the 172 is back to normal)")
+	# the selector on the menu and game-over screens
+	main.state = MAIN.MENU
+	main.hud.show_menu(0)
+	check(main.hud._sel_row.visible and main.hud.over_selector(Vector2(540, 1010)), "the aircraft selector shows on the menu")
+	var before_state: int = main.state
+	main._input(_touch_at(true, Vector2(540, 1010)))
+	check(main.state == before_state, "a tap on the selector doesn't start the run")
+	var id0: int = main.plane_id
+	main._on_plane_step(1)
+	check(main.plane_id == (id0 + 1) % 5 and main.hud._sel_name.text == PL.profile(main.plane_id)["name"] and main.aircraft.plane_id == main.plane_id, "the arrows cycle the aircraft (now %s)" % main.hud._sel_name.text)
+	main._on_plane_step(-1)
+	check(main.plane_id == id0, "...both ways")
+	main.hud.hide_overlay()
+	check(not main.hud._sel_row.visible, "the selector goes away in play")
+	main.state = MAIN.APPROACH
+	force(-1, -1)
+	root.size = Vector2i(1152, 648)
+
 	print("== 9. debug flags / frame time ==  [nodes %d]" % nodes())
 	DF.parse(["nofx=smoke,shake", "perf", "round=4", "seed=9", "bogus"] as Array[String])
 	check(DF.off("smoke") and DF.off("shake") and not DF.off("popup"), "?nofx=smoke,shake switches just those off")
@@ -1190,6 +1344,12 @@ func run_all() -> void:
 func force(scn: int, wx: int) -> void:
 	SC.forced_scenario = scn
 	SC.forced_weather = wx
+
+func _touch_at(pressed: bool, pos: Vector2) -> InputEventScreenTouch:
+	var e := InputEventScreenTouch.new()
+	e.position = pos
+	e.pressed = pressed
+	return e
 
 func _touch(pressed: bool) -> InputEventScreenTouch:
 	var e := InputEventScreenTouch.new()
@@ -1210,16 +1370,16 @@ func fly_g(flare_h: float) -> Dictionary:
 		var gs: float = maxf(float(ac.gs), 4.0)
 		var m: float = af.slope_at(ac.x)
 		var agl: float = ac.agl()
-		var trim: float = float(tn.trim_sink) * float(ac.sink_mult)
+		var trim: float = ac.trim_sink()
 		var cmd := 0.0
 		if flare_h < 0.0 or agl > flare_h:
 			var closing: float = maxf(gs - float(af.deck_speed), 4.0)
 			var t_go: float = maxf((float(af.aim_x) - float(ac.x)) / closing, 0.5)
-			var want_rel: float = clampf(-agl / t_go, -5.0, -2.5)
-			cmd = (want_rel + gs * m + trim) / float(tn.pitch_lift_gain)
+			var want_rel: float = clampf(-agl / t_go, -5.0, -0.7 * ac.trim_sink())
+			cmd = (want_rel + gs * m + trim) / ac.lift_gain()
 		else:
 			var want: float = -(0.25 + 0.3 * agl) + gs * m
-			cmd = (want + trim) / float(tn.pitch_lift_gain)
+			cmd = (want + trim) / ac.lift_gain()
 		set_nose(cmd)
 		main.advance(1.0 / 60.0)
 		if main.state == MAIN.CRASH:

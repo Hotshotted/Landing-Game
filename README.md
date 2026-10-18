@@ -21,6 +21,8 @@ Side view, low-poly primitives with black outlines.
 - **Scenarios** (each opens with a short title card): Short Field (trees before a short runway), Engine Out (no power: glide to the
   runway), Night (only the runway and approach lights), Mountain Strip (uphill runway: the ground rises to meet you, so flare later),
   Carrier (moving deck: touch down in the wire zone), Seaplane (calm water lane; rough water bounces), Moving Truck (land on a flatbed).
+- **Aircraft** with distinct handling, each only offered the scenarios that suit it: Cub (slow, floaty, short landings), 172 (balanced),
+  Twin (fast, long runways), Glider (no power, one attempt), Jet (very fast, stable, long runways, carrier). Pick on the menu or with `?plane=`.
 - **Weather** on top: fog (the runway appears late), rain (reduced visibility, wet runway), turbulence on final, wind shear (the
   windsock snaps round as a warning, then a sudden sink just before the flare). Endless mode mixes scenarios and weather with
   rising difficulty. Force one with `?scenario=` / `?weather=` or the `?tune` panel.
@@ -30,7 +32,7 @@ Side view, low-poly primitives with black outlines.
 ## Debug URL flags
 
 `?perf` worst-frame readout and hitch log · `?tune` live tuning panel (TUNE button, **Copy values**) ·
-`?nofx=smoke,shake,popup,wind,clouds,sfx,haptic|all` · `?noprewarm` · `?god` · `?round=N` · `?seed=N` · `?scenario=short|engineout|night|mountain|carrier|water|truck|standard` · `?weather=fog|rain|turbulence|shear|clear`.
+`?nofx=smoke,shake,popup,wind,clouds,sfx,haptic|all` · `?noprewarm` · `?god` · `?round=N` · `?seed=N` · `?plane=cub|172|twin|glider|jet` · `?scenario=short|engineout|night|mountain|carrier|water|truck|standard` · `?weather=fog|rain|turbulence|shear|clear`.
 Flags are listed under the build stamp (bottom-left).
 
 ## Conventions (same as sky-dodge)

@@ -18,6 +18,13 @@ var _stall_mark: ColorRect
 var _speed_label: Label
 var _gust: Label
 var _dist: Label
+signal plane_step(dir: int)
+var _sel_row: Control
+var _sel_name: Label
+var _sel_info: Label
+var _sel_prev: Button
+var _sel_next: Button
+var stall_marker := 0.72
 var _scn_label: Label
 var _card_root: Control
 var _card_title: Label
@@ -184,6 +191,25 @@ func _ready() -> void:
 	_card_root.add_child(_card_blurb)
 	_card_blurb.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_place(_card_blurb, 0.5, 0.27, -440, 270, 880, 220)
+	# the aircraft selector (shown on the menu and game-over screens)
+	_sel_row = Control.new()
+	_sel_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_sel_row.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_sel_row.visible = false
+	add_child(_sel_row)
+	_sel_name = _label(78, HORIZONTAL_ALIGNMENT_CENTER)
+	remove_child(_sel_name)
+	_sel_row.add_child(_sel_name)
+	_place(_sel_name, 0, 0.52, 160, 0, 760, 100)
+	_sel_info = _label(32, HORIZONTAL_ALIGNMENT_CENTER)
+	remove_child(_sel_info)
+	_sel_row.add_child(_sel_info)
+	_sel_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_place(_sel_info, 0, 0.52, 120, 110, 840, 150)
+	_sel_prev = _sel_button("<", -1)
+	_place(_sel_prev, 0, 0.52, 24, 0, 120, 100)
+	_sel_next = _sel_button(">", 1)
+	_place(_sel_next, 0, 0.52, 936, 0, 120, 100)
 	# menu / game-over overlay
 	_overlay = ColorRect.new()
 	_overlay.color = Color(0.05, 0.08, 0.14, 0.62)
@@ -191,12 +217,12 @@ func _ready() -> void:
 	_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	add_child(_overlay)
 	_ov_title = _label(150, HORIZONTAL_ALIGNMENT_CENTER)
-	_place(_ov_title, 0, 0.18, 0, 0, 1080, 190)
+	_place(_ov_title, 0, 0.09, 0, 0, 1080, 190)
 	_ov_title.anchor_right = 1.0
 	_ov_title.offset_right = 0
-	_ov_body = _label(46, HORIZONTAL_ALIGNMENT_CENTER)
+	_ov_body = _label(40, HORIZONTAL_ALIGNMENT_CENTER)
 	_ov_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_place(_ov_body, 0.5, 0.18, -420, 220, 840, 600)
+	_place(_ov_body, 0.5, 0.09, -440, 190, 880, 560)
 	_ov_prompt = _label(56, HORIZONTAL_ALIGNMENT_CENTER)
 	_place(_ov_prompt, 0, 0.72, 0, 0, 1080, 80)
 	_ov_prompt.anchor_right = 1.0
@@ -227,7 +253,43 @@ func _ready() -> void:
 	_splash.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_splash.visible = false
 	add_child(_splash)
+	move_child(_sel_row, _splash.get_index())     # (the aircraft selector sits above the dark overlay, below the splash)
 	move_child(_stamp, get_child_count() - 1)
+
+func _sel_button(text: String, dir: int) -> Button:
+	var b := Button.new()
+	b.text = text
+	b.add_theme_font_size_override("font_size", 64)
+	b.pressed.connect(func(): plane_step.emit(dir))
+	_sel_row.add_child(b)
+	return b
+
+## Show the chosen aircraft's name and a line about how it flies.
+func set_plane_choice(id: int) -> void:
+	var pr: Dictionary = Planes.profile(id)
+	_sel_name.text = pr["name"]
+	var bars := func(v: float, lo: float, hi: float) -> String:
+		var n := clampi(int(roundf((v - lo) / (hi - lo) * 4.0)) + 1, 1, 5)
+		return "#".repeat(n) + "-".repeat(5 - n)
+	var extra := ""
+	if float(pr["power"]) == 0.0:
+		extra += "  NO ENGINE"
+	if int(pr["attempts"]) == 1:
+		extra += "  ONE ATTEMPT"
+	if float(pr["min_len"]) > 0.0:
+		extra += "  LONG RUNWAYS"
+	_sel_info.text = "%s\nSpeed %s   Float %s   Braking %s%s" % [pr["blurb"], bars.call(float(pr["speed"]), 0.7, 1.6), bars.call(float(pr["ge"]) / maxf(float(pr["sink"]), 0.3), 1.0, 4.0), bars.call(float(pr["decel"]), 0.7, 1.4), extra]
+
+## Is this screen position on the aircraft selector (so a tap there doesn't start the run)?
+func over_selector(pos: Vector2) -> bool:
+	if not _sel_row.visible:
+		return false
+	var vs := get_viewport().get_visible_rect().size
+	return Rect2(0.0, vs.y * 0.52 - 10.0, vs.x, 280.0).has_point(pos)
+
+## Where the airspeed bar draws its stall mark (the aircraft's stall speed).
+func set_stall(v: float) -> void:
+	stall_marker = v
 
 func _label(size: int, align: HorizontalAlignment) -> Label:
 	var l := Label.new()
@@ -258,8 +320,9 @@ func set_score(v: int) -> void:
 func set_round(n: int) -> void:
 	_round.text = "ROUND %d" % n
 
-func set_strikes(n: int) -> void:
+func set_strikes(n: int, max_n: int = 3) -> void:
 	for i in _strikes.size():
+		_strikes[i].visible = i < max_n
 		_strikes[i].color = Color(0.95, 0.25, 0.22, 0.95) if i < n else Color(0.25, 0.28, 0.34, 0.8)
 
 func set_runway(text: String) -> void:
@@ -318,8 +381,8 @@ func set_flight(alt: float, vy: float, s: float, show: bool) -> void:
 	_sink.modulate = Grading.COLORS[Grading.grade_for_sink(maxf(sink, 0.0))]
 	var frac := clampf(s / 1.3, 0.0, 1.0)
 	_speed_bar.offset_right = _speed_bar.offset_left + 272.0 * frac
-	_speed_bar.color = Color(1, 0.35, 0.3) if s < Tuning.stall_speed + 0.04 else Color(0.5, 0.95, 0.6)
-	_stall_mark.offset_left = -300.0 + 280.0 * clampf(Tuning.stall_speed / 1.3, 0.0, 1.0)
+	_speed_bar.color = Color(1, 0.35, 0.3) if s < stall_marker + 0.04 else Color(0.5, 0.95, 0.6)
+	_stall_mark.offset_left = -300.0 + 280.0 * clampf(stall_marker / 1.3, 0.0, 1.0)
 	_stall_mark.offset_right = _stall_mark.offset_left + 4.0
 
 ## Runway distance readout under the runway info ("" hides it).
@@ -352,7 +415,7 @@ func show_menu(best: int) -> void:
 	_set_overlay(true)
 	_ov_title.text = "GREASER"
 	_ov_title.add_theme_color_override("font_color", Color(1.0, 0.85, 0.2))
-	_ov_body.text = "Land it soft.\n\nDrag up / down to pitch the nose.\nFlare just before touchdown - too early and you float then drop, too late and you slam in.\n\nTouch down on the aim markers.\nThree crashes end the run." + (("\n\nBest: %d" % best) if best > 0 else "")
+	_ov_body.text = "Land it soft.\n\nDrag up / down to pitch the nose. Flare just before touchdown - too early and you float then drop, too late and you slam in.\n\nTouch down on the aim markers. Three crashes end the run. There are no go-arounds." + (("\n\nBest: %d" % best) if best > 0 else "")
 	_ov_prompt.text = "TAP TO START"
 
 func show_over(total: int, best: int, landings: int, new_best: bool) -> void:
@@ -367,6 +430,7 @@ func hide_overlay() -> void:
 
 func _set_overlay(on: bool) -> void:
 	overlay_visible = on
+	_sel_row.visible = on and not _splash.visible
 	_overlay.visible = on
 	_ov_title.visible = on
 	_ov_body.visible = on
@@ -532,6 +596,7 @@ func _update_perf(delta: float) -> void:
 func begin_prewarm() -> void:
 	_splash.visible = true
 	_set_overlay(true)
+	_sel_row.visible = true     # (the selector's buttons are drawn behind the splash too)
 	_ov_title.text = "GREASER"
 	_ov_body.text = "0123456789 Greaser! Smooth Good Firm Hard CRASH Off the runway! Hit the trees!"
 	_ov_prompt.text = "TAP"
