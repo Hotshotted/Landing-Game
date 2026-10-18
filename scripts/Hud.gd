@@ -18,6 +18,13 @@ var _stall_mark: ColorRect
 var _speed_label: Label
 var _gust: Label
 var _dist: Label
+var _streak_label: Label
+var _glow: ColorRect
+var _glow_mat: ShaderMaterial
+var _streak_n := 0
+var _streak_pop := 0.0
+var _streak_lost_t := 0.0
+var _glow_level := 0.0
 signal plane_step(dir: int)
 var _sel_row: Control
 var _sel_name: Label
@@ -73,6 +80,14 @@ var overlay_visible := false
 
 func _ready() -> void:
 	layer = 5
+	_glow = ColorRect.new()
+	_glow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_glow.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_glow_mat = ShaderMaterial.new()
+	_glow_mat.shader = preload("res://shaders/streak_glow.gdshader")
+	_glow.material = _glow_mat
+	_glow.visible = false
+	add_child(_glow)
 	_score = _label(64, HORIZONTAL_ALIGNMENT_LEFT)
 	_place(_score, 0, 0, 24, 16, 400, 90)
 	_round = _label(34, HORIZONTAL_ALIGNMENT_LEFT)
@@ -90,6 +105,9 @@ func _ready() -> void:
 	_place(_runway, 0.5, 0, -270, 72, 540, 40)
 	_dist = _label(34, HORIZONTAL_ALIGNMENT_CENTER)
 	_place(_dist, 0.5, 0, -270, 110, 540, 42)
+	_streak_label = _label(46, HORIZONTAL_ALIGNMENT_LEFT)
+	_place(_streak_label, 0, 0, 24, 236, 520, 70)
+	_streak_label.visible = false
 	_scn_label = _label(26, HORIZONTAL_ALIGNMENT_LEFT)
 	_place(_scn_label, 0, 0, 24, 198, 520, 34)
 	_scn_label.modulate = Color(1, 1, 1, 0.8)
@@ -338,6 +356,68 @@ func set_wind(head: float) -> void:
 	else:
 		_wind.text = "WIND  %.0f  tailwind  >>" % a
 
+const STREAK_COLORS: Array[Color] = [
+	Color(1, 1, 1), Color(1.0, 0.92, 0.3), Color(1.0, 0.72, 0.2), Color(1.0, 0.5, 0.15), Color(1.0, 0.3, 0.2), Color(1.0, 0.25, 0.55), Color(0.85, 0.35, 1.0)]
+
+## The Greaser streak: `n` consecutive greasers (the multiplier is the streak, at least 1). `pop` = it just went up: the
+## label punches. The label grows, heats up and pulses with the streak, and a glow builds around the screen edges.
+func set_streak(n: int, pop: bool = false) -> void:
+	_streak_n = n
+	if pop:
+		_streak_pop = 1.0
+	_streak_lost_t = 0.0
+	_streak_label.visible = n > 0
+	if n > 0:
+		_streak_label.text = "STREAK x%d" % mini(n, Tuning.streak_cap)
+
+func streak_tier() -> int:
+	return clampi(_streak_n - 1, 0, 6)
+
+## The streak just broke (`old` was its length): a grey "STREAK LOST" for a moment.
+func streak_lost(old: int) -> void:
+	_streak_n = 0
+	if old >= 2:
+		_streak_label.visible = true
+		_streak_label.text = "STREAK LOST  x%d" % mini(old, Tuning.streak_cap)
+		_streak_lost_t = 1.4
+	else:
+		_streak_label.visible = false
+
+func glow_level() -> float:
+	return _glow_level
+
+func _update_streak(dt: float) -> void:
+	var tier := streak_tier()
+	var target := float(tier) / 6.0 * Tuning.streak_glow_max if _streak_n > 0 else 0.0
+	if _streak_n >= 2:
+		target = maxf(target, 0.08 * Tuning.streak_glow_max)
+	_glow_level = move_toward(_glow_level, target, dt * 0.8)
+	_glow.visible = _glow_level > 0.005
+	if _glow.visible:
+		var pulse := 0.8 + 0.2 * sin(_t * (3.0 + float(tier)))
+		_glow_mat.set_shader_parameter("intensity", _glow_level * pulse)
+		_glow_mat.set_shader_parameter("glow_color", STREAK_COLORS[tier])
+	if _streak_lost_t > 0.0:
+		_streak_lost_t -= dt
+		_streak_label.modulate = Color(0.7, 0.72, 0.78, clampf(_streak_lost_t * 2.0, 0.0, 1.0))
+		_streak_label.scale = Vector2.ONE
+		if _streak_lost_t <= 0.0:
+			_streak_label.visible = false
+		return
+	if not _streak_label.visible:
+		return
+	_streak_pop = maxf(_streak_pop - dt * 3.0, 0.0)
+	var size := 44 + 7 * tier
+	_streak_label.add_theme_font_size_override("font_size", size)
+	var col: Color = STREAK_COLORS[tier]
+	if tier >= 6:   # top of the ramp: the colour cycles
+		col = Color.from_hsv(fposmod(_t * 0.6, 1.0), 0.65, 1.0)
+	_streak_label.modulate = col
+	_streak_label.pivot_offset = Vector2(0.0, float(size) * 0.5)
+	var pulse2 := 1.0 + (0.03 + 0.012 * float(tier)) * sin(_t * (5.0 + 1.5 * float(tier))) + 0.35 * _streak_pop
+	_streak_label.scale = Vector2(pulse2, pulse2)
+	_streak_label.rotation = deg_to_rad(sin(_t * 31.0) * float(maxi(tier - 3, 0)) * 0.6)
+
 ## A short warning under the wind readout ("GUST!", "WIND SHEAR!", "TRAPPED!").
 func flash_warning(text: String, color: Color = Color(1, 0.9, 0.4)) -> void:
 	_gust.text = text
@@ -404,6 +484,10 @@ func popup(title: String, sub: String, color: Color, seconds: float) -> void:
 	_pop_t = 0.0
 	_pop_len = seconds
 
+## (tests) the grade popup's big text.
+func _popup_text_for_test() -> String:
+	return _pop_title.text + " " + _pop_sub.text
+
 func clear_popup() -> void:
 	_pop_t = 99.0
 	_pop_title.modulate.a = 0.0
@@ -418,11 +502,11 @@ func show_menu(best: int) -> void:
 	_ov_body.text = "Land it soft.\n\nDrag up / down to pitch the nose. Flare just before touchdown - too early and you float then drop, too late and you slam in.\n\nTouch down on the aim markers. Three crashes end the run. There are no go-arounds." + (("\n\nBest: %d" % best) if best > 0 else "")
 	_ov_prompt.text = "TAP TO START"
 
-func show_over(total: int, best: int, landings: int, new_best: bool) -> void:
+func show_over(total: int, best: int, landings: int, new_best: bool, best_streak: int = 0) -> void:
 	_set_overlay(true)
 	_ov_title.text = "RUN OVER"
 	_ov_title.add_theme_color_override("font_color", Color(1.0, 0.4, 0.35))
-	_ov_body.text = "Score  %d\nLandings  %d\n%s" % [total, landings, "NEW BEST!" if new_best else "Best  %d" % best]
+	_ov_body.text = "Score  %d\nLandings  %d\nBest streak  x%d\n%s" % [total, landings, maxi(best_streak, 1) if best_streak > 0 else 0, "NEW BEST!" if new_best else "Best  %d" % best]
 	_ov_prompt.text = "TAP TO FLY AGAIN"
 
 func hide_overlay() -> void:
@@ -560,6 +644,7 @@ func update(delta: float) -> void:
 	if overlay_visible:
 		_ov_prompt.modulate.a = 0.55 + 0.45 * sin(_t * 4.0)
 	_update_papi(delta)
+	_update_streak(delta)
 	_update_perf(delta)
 
 # ---------- ?perf ----------
@@ -607,6 +692,7 @@ func begin_prewarm() -> void:
 		_pop_sub.modulate.a = 1.0
 	_gust.modulate.a = 1.0
 	set_papi(2, 540.0, true, true)   # the big PAPI is drawn for real too
+	set_streak(7, true)               # ... and a high streak (label, glow)
 
 func prewarm_popups() -> void:
 	for g in Grading.NAMES:
@@ -615,6 +701,9 @@ func prewarm_popups() -> void:
 
 func end_prewarm() -> void:
 	set_papi(2, 540.0, false, true)
+	set_streak(0)
+	_glow_level = 0.0
+	_glow.visible = false
 	_splash.visible = false
 	_set_overlay(false)
 	clear_popup()

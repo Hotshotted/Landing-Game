@@ -20,6 +20,9 @@ var fog: FogOverlay
 var scenario := 0
 var weather := 0
 var plane_id := Planes.C172     # the aircraft in use
+var streak := 0                 # consecutive Greaser! landings
+var best_streak := 0
+var _min_agl := 9999.0          # lowest the plane has been above the ground this approach (for the no-go-around rule)
 
 var state := MENU
 var round_no := 0
@@ -185,6 +188,9 @@ func start_run() -> void:
 	last_result = {}
 	last_crash = ""
 	sim_time = 0.0
+	streak = 0
+	best_streak = 0
+	hud.set_streak(0)
 	hud.hide_overlay()
 	hud.clear_popup()
 	hud.set_score(0)
@@ -225,6 +231,7 @@ func _begin_round(card: bool = true) -> void:
 	_awarded = 0
 	_arrested = false
 	_shear_state = 0
+	_min_agl = 9999.0
 	_timer = 0.0
 	_puff_t = 0.0
 	_shake = 0.0
@@ -300,6 +307,10 @@ func _terrain_text() -> String:
 		Airfield.HILL:
 			return "hill ahead"
 	return ""
+
+## The points multiplier right now: the streak, at least 1, capped.
+func streak_multiplier() -> int:
+	return clampi(streak, 1, Tuning.streak_cap)
 
 ## Crashes allowed in a run: three, but only one for the glider.
 func strikes_max() -> int:
@@ -466,6 +477,11 @@ func _step_approach(dt: float) -> void:
 		if aircraft.x > airfield.rwy_end + 4.0 and not DebugFlags.god_enabled():
 			_crash(_flew_past_text())
 			return
+	# no go-around: once the plane has been low, climbing well clear again is a go-around attempt - which is a crash
+	var agl := aircraft.agl()
+	_min_agl = minf(_min_agl, agl)
+	if _min_agl < Tuning.go_around_low and agl > _min_agl + Tuning.go_around_climb and not DebugFlags.god_enabled():
+		_crash("No go-around!")
 
 func _hazard_text() -> String:
 	match scenario:
@@ -558,16 +574,35 @@ func _touchdown() -> void:
 		last_result["sink"] = sink
 		last_result["offset"] = px - airfield.aim_x
 		last_result["bounced"] = bounced
-		_awarded = int(last_result["total"])
+		var g0: int = last_result["grade"]
+		var had_streak := streak
+		if g0 == 0:
+			streak = mini(streak + 1, Tuning.streak_cap)     # a Greaser! extends the streak
+		elif g0 >= 3:
+			streak = 0                                      # Firm / Hard breaks it (Smooth and Good keep it)
+		var mult := streak_multiplier()
+		last_result["base"] = int(last_result["total"])
+		last_result["mult"] = mult
+		_awarded = int(last_result["total"]) * mult
+		last_result["points"] = _awarded
+		best_streak = maxi(best_streak, streak)
 		score += _awarded
 		landings += 1
 		hud.set_score(score)
 		var g: int = last_result["grade"]
-		var sub := "Sink %.1f   %s%.0f m from the markers   %s   +%d" % [
-			sink, "+" if px >= airfield.aim_x else "", px - airfield.aim_x, "BOUNCED" if bounced else "no bounce", _awarded]
+		var sub := "Sink %.1f   %s%.0f m from the markers   %s   +%d%s" % [
+			sink, "+" if px >= airfield.aim_x else "", px - airfield.aim_x, "BOUNCED" if bounced else "no bounce", int(last_result["total"]),
+			(" x%d = %d" % [mult, _awarded]) if mult > 1 else ""]
 		if rough:
 			sub = "ROUGH WATER   " + sub
 		hud.popup(Grading.NAMES[g], sub, Grading.COLORS[g], Tuning.popup_time)
+		if g0 >= 3:
+			hud.streak_lost(had_streak)
+		else:
+			hud.set_streak(streak, g0 == 0)
+		if g0 == 0:
+			fx.sparkle(Vector3(px, gy + 3.0, 1.0), streak - 1)
+			sfx.play(Sfx.CHIME, 1.0 + 0.1 * float(mini(streak, 8)), -4.0)
 		hud.set_hint("")
 		if g <= 1:
 			sfx.play(Sfx.CHIME, 1.0 + 0.12 * float(1 - g), -6.0)
@@ -593,6 +628,9 @@ func _touchdown() -> void:
 func _crash(reason: String) -> void:
 	last_crash = reason
 	strikes += 1
+	if streak > 0:
+		hud.streak_lost(streak)
+	streak = 0
 	score -= _awarded            # a landing that ends in a crash (bounce into trees) doesn't count
 	if _awarded > 0:
 		landings -= 1
@@ -631,7 +669,7 @@ func _show_over() -> void:
 		Save.store_best(best)
 	hud.fade_to(0.0)
 	hud.clear_popup()
-	hud.show_over(score, best, landings, new_best)
+	hud.show_over(score, best, landings, new_best, best_streak)
 
 # ---------- camera / HUD ----------
 

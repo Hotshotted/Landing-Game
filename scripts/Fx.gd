@@ -5,11 +5,14 @@ extends Node3D
 
 const SMOKE_EMITTERS := 5
 const FIRE_EMITTERS := 2
+const GOLD_EMITTERS := 3
 
 var _smoke: Array[CPUParticles3D] = []
 var _fire: Array[CPUParticles3D] = []
 var _next_smoke := 0
 var _next_fire := 0
+var _gold: Array[CPUParticles3D] = []
+var _next_gold := 0
 
 func _ready() -> void:
 	var quad := QuadMesh.new()
@@ -46,6 +49,36 @@ func _ready() -> void:
 		p.emitting = false
 		add_child(p)
 		_smoke.append(p)
+	var gquad := QuadMesh.new()
+	gquad.size = Vector2(0.45, 0.45)
+	var gmat := StandardMaterial3D.new()
+	gmat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	gmat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	gmat.vertex_color_use_as_albedo = true
+	gmat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	gquad.material = gmat
+	var gramp := Gradient.new()   # white-hot -> gold -> gone
+	gramp.colors = PackedColorArray([Color(1, 1, 0.9, 1), Color(1, 0.85, 0.3, 1), Color(1, 0.6, 0.1, 0)])
+	gramp.offsets = PackedFloat32Array([0.0, 0.4, 1.0])
+	for i in GOLD_EMITTERS:
+		var p := CPUParticles3D.new()
+		p.mesh = gquad
+		p.color_ramp = gramp
+		p.amount = 36
+		p.lifetime = 1.0
+		p.one_shot = true
+		p.explosiveness = 0.95
+		p.local_coords = false
+		p.direction = Vector3(0, 1, 0)
+		p.spread = 180.0
+		p.initial_velocity_min = 3.0
+		p.initial_velocity_max = 9.0
+		p.gravity = Vector3(0, -4.0, 0)
+		p.scale_amount_min = 0.5
+		p.scale_amount_max = 1.2
+		p.emitting = false
+		add_child(p)
+		_gold.append(p)
 	var fquad := QuadMesh.new()
 	fquad.size = Vector2(1.0, 1.0)
 	var fmat := StandardMaterial3D.new()
@@ -76,6 +109,19 @@ func _ready() -> void:
 		p.emitting = false
 		add_child(p)
 		_fire.append(p)
+
+## The streak sparkle: a gold burst that gets bigger and hotter the higher the streak tier (0..6).
+func sparkle(pos: Vector3, tier: int) -> void:
+	var p := _gold[_next_gold]
+	_next_gold = (_next_gold + 1) % GOLD_EMITTERS
+	var t := clampi(tier, 0, 6)
+	p.color = Color(1.0, 0.9 - 0.12 * float(t), 0.35 - 0.05 * float(t))
+	p.initial_velocity_max = 8.0 + 2.5 * float(t)
+	p.scale_amount_max = 0.8 + 0.25 * float(t)
+	p.global_position = pos
+	p.visible = true
+	p.restart()
+	p.emitting = true
 
 ## Tire smoke / dust at `pos`. `power` 0..1 scales the puff size and speed, `color` tints it.
 func smoke(pos: Vector3, power: float, color: Color) -> void:
@@ -110,11 +156,16 @@ func show_all(pos: Vector3) -> void:
 		smoke(pos + Vector3(float(i) * 1.5 - 3.0, 0.3, 1.0), 1.0, Color.WHITE)
 	for i in FIRE_EMITTERS:
 		crash(pos + Vector3(float(i) * 3.0 - 1.5, 3.0, 1.0))
+	for i in GOLD_EMITTERS:
+		sparkle(pos + Vector3(float(i) * 2.0 - 2.0, 4.0, 1.0), 6)
 
 func clear() -> void:
 	for p in _smoke:
 		p.emitting = false
 		p.visible = false   # (hiding drops the particles still in flight)
 	for p in _fire:
+		p.emitting = false
+		p.visible = false
+	for p in _gold:
 		p.emitting = false
 		p.visible = false

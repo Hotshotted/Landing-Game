@@ -26,6 +26,9 @@ Side view, low-poly primitives with black outlines.
 - **Weather** on top: fog (the runway appears late), rain (reduced visibility, wet runway), turbulence on final, wind shear (the
   windsock snaps round as a warning, then a sudden sink just before the flare). Endless mode mixes scenarios and weather with
   rising difficulty. Force one with `?scenario=` / `?weather=` or the `?tune` panel.
+- **Streaks:** consecutive *Greaser!* landings multiply the points (x2, x3 ... up to x10), with an escalating label, edge glow and
+  sparkle. A Smooth or Good landing keeps the streak; a Firm or Hard landing or a crash breaks it. **No go-arounds:** every
+  approach is landed or crashed (climbing well clear after being low is a crash).
 - Endless rounds on random runways (length, surface, trees or a hill before the field). Three crashes end the run;
   the score is the sum of the landings.
 

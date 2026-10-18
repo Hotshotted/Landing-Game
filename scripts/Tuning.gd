@@ -197,6 +197,17 @@ var papi_hud_margin := 24.0
 var papi_hud_fade := 9.0
 var papi_hud_follow := 10.0
 
+# ---------- Streaks ----------
+## Consecutive "Greaser!" landings multiply the points (x2, x3 ...) up to this cap. A Smooth or Good landing keeps the streak
+## (and still earns the multiplier); a Firm or Hard landing, or a crash, breaks it.
+var streak_cap := 10
+## How bright the screen-edge glow gets at the top of the streak ramp (0..1).
+var streak_glow_max := 0.6
+## No go-around: once the plane has been below go_around_low above the ground, climbing go_around_climb above its lowest point is a
+## go-around attempt - and that is a crash. (A balloon in the flare is nowhere near this.)
+var go_around_low := 15.0
+var go_around_climb := 14.0
+
 # ---------- Scenarios ----------
 ## The title card at the start of each approach (seconds; a tap skips it).
 var card_time := 1.7

@@ -1327,6 +1327,139 @@ func run_all() -> void:
 	force(-1, -1)
 	root.size = Vector2i(1152, 648)
 
+	print("== 16. streaks and no go-around ==  [nodes %d]" % nodes())
+	root.size = Vector2i(540, 960)
+	await frames(2)
+	force(0, 0)
+	main.select_plane(PL.C172)
+	main.start_run()
+	main._end_card()
+	var mults: Array[int] = []
+	var spts: Array[int] = []
+	var bases: Array[int] = []
+	var streaks_seen: Array[int] = []
+	var grades_seen: Array[int] = []
+	var score_before := 0
+	# G, G, Smooth, G, Good, Firm, G  - land each with a chosen sink rate right on the markers
+	for sink_set in [0.5, 0.5, 1.5, 0.5, 2.3, 3.3, 0.5]:
+		new_round(1100 + mults.size(), 5)
+		main.state = MAIN.APPROACH
+		land_at(float(sink_set), 0.0)
+		mults.append(int(main.last_result.get("mult", -1)))
+		spts.append(int(main.last_result.get("points", -1)))
+		bases.append(int(main.last_result.get("base", -1)))
+		streaks_seen.append(main.streak)
+		grades_seen.append(int(main.last_result.get("grade", -1)))
+	print("      grades %s | streak %s | multiplier %s | base %s | points %s" % [str(grades_seen), str(streaks_seen), str(mults), str(bases), str(spts)])
+	check(grades_seen == [0, 0, 1, 0, 2, 3, 0], "the test landings grade Greaser, Greaser, Smooth, Greaser, Good, Firm, Greaser (%s)" % str(grades_seen))
+	check(streaks_seen == [1, 2, 2, 3, 3, 0, 1], "a Greaser extends the streak, Smooth / Good keep it, Firm breaks it (%s)" % str(streaks_seen))
+	check(mults == [1, 2, 2, 3, 3, 1, 1], "...and the multiplier is the streak (x1, x2, x2, x3, x3, then back to x1)")
+	var pts_ok := true
+	for i in spts.size():
+		if spts[i] != bases[i] * mults[i]:
+			pts_ok = false
+	check(pts_ok, "points = the landing's points x the multiplier (%s)" % str(spts))
+	var expect_score := 0
+	for v in spts:
+		expect_score += v
+	check(main.score == expect_score, "...and the score is the sum of those (%d)" % main.score)
+	check(main.best_streak == 3, "the best streak is remembered (x%d)" % main.best_streak)
+	check(main.hud._popup_text_for_test().contains("x1") == false, "(a x1 landing doesn't show a multiplier in the popup)")
+	# the popup shows the multiplier when it applies
+	new_round(1120, 5)
+	main.streak = 2
+	land_at(0.5, 0.0)
+	check(main.hud._pop_sub.text.contains("x3 ="), "the popup shows the multiplier when there is one (%s)" % main.hud._pop_sub.text.right(24))
+	# a crash breaks the streak
+	new_round(1121, 5)
+	main.streak = 4
+	main.aircraft.reset(main.airfield.rwy_end + 10.0, 20.0)
+	main.advance(0.1)
+	check(main.state == MAIN.CRASH and main.streak == 0, "a crash breaks the streak")
+	check(main.hud._streak_label.text.begins_with("STREAK LOST"), "...with a 'STREAK LOST' message (%s)" % main.hud._streak_label.text)
+	# a bounce that ends in a crash doesn't count: the landing's points are taken back, and so is the streak
+	new_round(1122, 5)
+	var sc0: int = main.score
+	main.streak = 1
+	land_at(4.0, 0.0)
+	check(main.last_result.get("bounced", false) and main.streak == 0, "a Firm / bouncy landing breaks the streak (grade %s)" % str(main.last_result.get("name", "?")))
+	# the cap
+	main.streak = int(tn.streak_cap)
+	new_round(1123, 5)
+	land_at(0.5, 0.0)
+	check(main.streak == int(tn.streak_cap) and main.last_result["mult"] == int(tn.streak_cap), "the multiplier stops at the cap (x%d)" % int(tn.streak_cap))
+	# HUD: the label and the glow escalate
+	main.hud.set_streak(0)
+	main.hud.update(0.016)
+	check(not main.hud._streak_label.visible, "no streak, no label")
+	var sizes: Array[int] = []
+	var glows: Array[float] = []
+	var cols: Array[Color] = []
+	for sn in [1, 2, 3, 5, 7]:
+		main.hud.set_streak(sn, true)
+		for i in 90:
+			main.hud.update(1.0 / 60.0)
+		sizes.append(main.hud._streak_label.get_theme_font_size("font_size"))
+		glows.append(main.hud.glow_level())
+		cols.append(main.hud._streak_label.modulate)
+	print("      label sizes %s | glow %s" % [str(sizes), str(glows.map(func(v): return snappedf(v, 0.01)))])
+	check(sizes[0] < sizes[1] and sizes[1] < sizes[2] and sizes[2] < sizes[3] and sizes[3] < sizes[4], "the streak label grows with the streak (%s)" % str(sizes))
+	check(glows[0] < glows[1] and glows[1] < glows[2] and glows[3] < glows[4] and glows[4] > 0.3, "the edge glow builds with it (%.2f -> %.2f)" % [glows[0], glows[4]])
+	check(cols[0] != cols[2] and cols[2] != cols[3], "...and the label heats up (the colour changes with the tier)")
+	check(main.hud._streak_label.text == "STREAK x7", "it reads STREAK x7 (%s)" % main.hud._streak_label.text)
+	main.hud.streak_lost(7)
+	for i in 200:
+		main.hud.update(1.0 / 60.0)
+	check(not main.hud._streak_label.visible and main.hud.glow_level() < 0.3, "when the streak breaks the label goes and the glow fades")
+	main.hud.set_streak(0)
+	for i in 120:
+		main.hud.update(1.0 / 60.0)
+	check(main.hud.glow_level() < 0.01, "the glow is gone with no streak")
+	# a run starts with no streak; the game-over screen shows the best one
+	main.start_run()
+	main._end_card()
+	check(main.streak == 0 and main.best_streak == 0 and not main.hud._streak_label.visible, "a new run starts with no streak")
+	main.best_streak = 4
+	main._show_over()
+	check(main.hud._ov_body.text.contains("Best streak  x4"), "the game-over screen shows the best streak (%s)" % main.hud._ov_body.text.replace("\n", " | "))
+	main.start_run()
+	main._end_card()
+	# --- no go-around
+	new_round(1130, 5)
+	main.state = MAIN.APPROACH
+	main.aircraft.reset(main.airfield.thr - 80.0, 6.0)
+	main.advance(1.0 / 60.0)
+	check(main.state == MAIN.APPROACH, "(low and fine)")
+	main.aircraft.y = 3.0
+	main.advance(1.0 / 60.0)
+	main.aircraft.y = 3.0 + float(tn.go_around_climb) * 0.6
+	main.aircraft.vy = 0.0
+	main.advance(1.0 / 60.0)
+	check(main.state == MAIN.APPROACH, "a balloon in the flare (a few metres) is not a go-around")
+	main.aircraft.y = 3.0 + float(tn.go_around_climb) + 4.0
+	main.advance(1.0 / 60.0)
+	check(main.state == MAIN.CRASH and main.last_crash == "No go-around!", "climbing well clear after being low is a crash (%s)" % main.last_crash)
+	new_round(1131, 5)
+	main.aircraft.reset(0.0, 45.0)
+	for i in 30:
+		main.advance(1.0 / 60.0)
+		main.aircraft.y = 45.0 + float(i)
+	check(main.state == MAIN.APPROACH, "a climb from high up (never low) isn't judged: it just flies past")
+	new_round(1132, 5)
+	check(main._min_agl > 1000.0, "the low point resets for every approach")
+	# --- streak effects allocate nothing
+	var n_pre2 := nodes()
+	var r_pre2 := resources()
+	main.streak = 0
+	for i in 8:
+		new_round(1140 + i, 5)
+		land_at(0.5, 0.0)
+		for k in 30:
+			main.advance(1.0 / 30.0)
+	check(nodes() == n_pre2 and resources() <= r_pre2 + 3, "eight greasers in a row (sparkles, label, glow): no new nodes (%d -> %d) or resources" % [n_pre2, nodes()])
+	force(-1, -1)
+	root.size = Vector2i(1152, 648)
+
 	print("== 9. debug flags / frame time ==  [nodes %d]" % nodes())
 	DF.parse(["nofx=smoke,shake", "perf", "round=4", "seed=9", "bogus"] as Array[String])
 	check(DF.off("smoke") and DF.off("shake") and not DF.off("popup"), "?nofx=smoke,shake switches just those off")
@@ -1340,6 +1473,19 @@ func run_all() -> void:
 	check(main._frame_delta(1.0) == 0.0, "a stall (1 s frame) is dropped, not simulated")
 	check(main._frame_delta(0.016) == 0.0 and main._frame_delta(0.016) == 0.0, "...and a couple of frames are skipped after it")
 	check(main._frame_delta(0.016) > 0.0, "...then play resumes")
+
+## Touch down at `offset` from the aim markers with roughly `sink` (set a hair above the ground, so it's about this much).
+func land_at(sink: float, offset: float) -> void:
+	var af = main.airfield
+	var px: float = af.aim_x + offset
+	main.aircraft.reset(px, af.ground_y(px) + 0.012)
+	main.aircraft.gy = af.ground_y(px)
+	main.aircraft.vy = -sink
+	main.aircraft.theta_target = 0.0
+	for i in 40:
+		main.advance(1.0 / 60.0)
+		if main.state != MAIN.APPROACH or main._graded:
+			break
 
 func force(scn: int, wx: int) -> void:
 	SC.forced_scenario = scn
