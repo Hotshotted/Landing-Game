@@ -18,15 +18,22 @@ var sim_step := 0.008
 # ---------- Camera ----------
 ## Camera tilt looking down onto the field, so the runway's top surface shows as a band.
 var camera_tilt_deg := 9.0
-## World units visible across the screen width when the plane is high / when it is low.
-var view_width_high := 80.0
+## Every approach starts framed to show the plane and the whole runway (the width needed, capped here) and
+## zooms smoothly in as the plane gets closer, reaching view_width_low (the close flare framing) once the plane
+## is zoom_close_distance from the aim markers. A low altitude also forces the close framing
+## (fully close at zoom_low_altitude, none above zoom_high_altitude).
 var view_width_low := 38.0
-## Altitude (tyres above ground) at which the view is fully zoomed out / fully zoomed in.
-var zoom_high_altitude := 34.0
+var view_width_full_max := 640.0
+var zoom_close_distance := 60.0
+var zoom_high_altitude := 22.0
 var zoom_low_altitude := 10.0
-## Where the plane sits across the screen (0 = left edge, 1 = right edge) and where the ground sits up from the bottom.
+## Where the plane sits across the screen in the close framing (0 = left edge, 1 = right edge).
 var plane_screen_x := 0.26
+## Where the ground sits up from the bottom of the screen, close framing / wide framing.
 var ground_screen_y := 0.2
+var ground_screen_y_wide := 0.38
+## The camera looks down a bit more when zoomed out, so the runway shows as a fatter band.
+var camera_tilt_wide_deg := 26.0
 ## How fast the camera catches up with the zoom (per second).
 var camera_smoothing := 5.0
 
@@ -161,8 +168,23 @@ var fade_time := 0.25
 ## Tire smoke and dust.
 var smoke_count := 22
 var roll_puff_interval := 0.09
-## Black outline width around every shape, in world units.
+## Black outline width around every hazard / play-layer shape, in world units (grows when zoomed out so it stays visible).
 var outline_thickness := 0.16
+## Scenery (background trees, far hills, clouds) is faded toward the sky colour by this much (0 = full colour, 1 = sky)
+## and scrolls at this fraction of the camera speed (1 = same as the play layer).
+var scenery_haze_trees := 0.6
+var scenery_haze_hills := 0.72
+var parallax_trees := 0.6
+var parallax_hills := 0.3
+var parallax_clouds := 0.15
+
+# ---------- PAPI ----------
+## Four lights beside the aim markers: all white = too high, 2 white + 2 red = on the glide path, all red = too low.
+## Each light flips when the plane's glide slope (relative to the path to the markers) crosses its step; the steps
+## are papi_band apart (0.12 = 12 % of the slope).
+var papi_band := 0.12
+## Inside this distance of the markers the lights hold their last state (the angle swings wildly right at the end).
+var papi_hold_distance := 20.0
 
 # ---------- Start-up pre-warm ----------
 var prewarm_min_seconds := 1.5

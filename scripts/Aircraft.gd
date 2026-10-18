@@ -22,6 +22,7 @@ var wobble := 0.0       # gust kick on the drawn nose (degrees)
 var _wobble_v := 0.0
 var _pending_drag := 0.0
 var _vis_pitch := 0.0
+var _view_scale := 1.0   # drawn bigger when the camera is zoomed far out, so the plane stays easy to see
 var _pivot: Node3D
 var _prop: Node3D
 var _outline: ShaderMaterial
@@ -120,6 +121,11 @@ func step_ground(h: float, decel: float) -> void:
 func kick(sign_dir: float) -> void:
 	_wobble_v += sign_dir * Tuning.gust_wobble * 6.0
 
+## Draw the plane larger (and its outline thicker) the further the camera is zoomed out; collision is unaffected.
+func set_view_scale(view_w: float) -> void:
+	_view_scale = clampf(view_w / 108.0, 1.0, 6.0)
+	_outline.set_shader_parameter("thickness", Tuning.outline_thickness * clampf(view_w / 54.0, 1.0, 8.0))
+
 ## Per frame: place the model and set the drawn attitude.
 func update_visual(dt: float) -> void:
 	var goal := Tuning.pitch_visual_offset + theta * Tuning.pitch_visual_scale
@@ -129,7 +135,8 @@ func update_visual(dt: float) -> void:
 	else:
 		_vis_pitch = lerpf(_vis_pitch, goal, 1.0 - exp(-10.0 * dt))
 		_pivot.rotation.z = deg_to_rad(_vis_pitch + wobble)
-	_pivot.position = Vector3(x, y + GEAR_H, 0.0)
+	_pivot.scale = Vector3.ONE * _view_scale
+	_pivot.position = Vector3(x, y + GEAR_H * _view_scale, 0.0)   # (the tyres stay on the ground however big it is drawn)
 	_prop.rotation.x += 45.0 * dt
 
 # ---------- model ----------

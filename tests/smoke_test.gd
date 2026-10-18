@@ -484,6 +484,153 @@ func run_all() -> void:
 		if tn.get(e[0]) == null:
 			check(false, "tune entry %s exists in Tuning" % e[0])
 
+	print("== 10. framing, zoom, readout, layers, PAPI ==  [nodes %d]" % nodes())
+	# every approach starts with the plane and the WHOLE runway on screen
+	var framed_ok := true
+	var wide_start := 0.0
+	for i in 16:
+		new_round(500 + i, 1 + (i * 3) % 14)
+		var left: float = main._cam_x - main._cam_w * 0.5
+		var right: float = main._cam_x + main._cam_w * 0.5
+		var capped: bool = main._full_w >= float(tn.view_width_full_max) - 0.01
+		if not capped and not (main.aircraft.x >= left and main.airfield.rwy_end <= right):
+			framed_ok = false
+			print("      not framed: round %d left %.0f right %.0f plane %.0f rwy_end %.0f" % [main.round_no, left, right, main.aircraft.x, main.airfield.rwy_end])
+		wide_start += main._cam_w
+	check(framed_ok, "every approach starts framed with the plane and the whole runway on screen")
+	check(wide_start / 16.0 > 2.0 * float(tn.view_width_low), "...a much wider view than the close framing (mean start width %.0f vs %.0f)" % [wide_start / 16.0, float(tn.view_width_low)])
+	check(main.airfield._mark > 1.5 and main.aircraft._view_scale > 1.2, "zoomed out, the markers and the plane are drawn larger so they stay visible")
+	# zoom: smooth, never zooms back out, reaches the close framing for the flare
+	new_round(520, 4)
+	var widths: Array[float] = []
+	var first_w: float = main._cam_w
+	var bad_step := 0.0
+	var zoom_ok := true
+	var prev_w: float = main._cam_w
+	var flare_w := -1.0
+	var t_fly := 0.0
+	while t_fly < 40.0:
+		t_fly += 1.0 / 60.0
+		var gs2: float = maxf(float(main.aircraft.gs), 4.0)
+		var t_go2: float = maxf((float(main.airfield.aim_x) - float(main.aircraft.x)) / gs2, 0.5)
+		var want2: float = clampf(-float(main.aircraft.y) / t_go2, -5.0, -2.5)
+		var cmd2: float = (want2 + float(tn.trim_sink)) / float(tn.pitch_lift_gain)
+		if main.aircraft.y < 2.5:
+			cmd2 = (-(0.25 + 0.3 * float(main.aircraft.y)) + float(tn.trim_sink)) / float(tn.pitch_lift_gain)
+		set_nose(cmd2)
+		main.advance(1.0 / 60.0)
+		var w2: float = main._cam_w
+		if w2 > prev_w + 0.02 * prev_w + 0.3:
+			zoom_ok = false
+		bad_step = maxf(bad_step, absf(w2 - prev_w) / maxf(prev_w, 1.0))
+		prev_w = w2
+		if flare_w < 0.0 and main.aircraft.y < 6.0:
+			flare_w = w2
+		if main.state != MAIN.APPROACH:
+			break
+	check(zoom_ok, "the zoom only ever tightens during the approach")
+	check(bad_step < 0.06, "...smoothly (biggest single-frame change %.1f %%)" % (bad_step * 100.0))
+	check(flare_w > 0.0 and flare_w < float(tn.view_width_low) * 1.1, "by the flare it is the close framing (%.1f wide vs %.1f)" % [flare_w, float(tn.view_width_low)])
+	check(first_w > flare_w * 2.0, "...from a much wider start (%.0f -> %.0f)" % [first_w, flare_w])
+	# runway distance readout
+	new_round(521, 2)
+	main._update_hud(0.016)
+	var d0_text: String = main.hud._dist.text
+	check(d0_text.begins_with("RUNWAY"), "the runway distance readout shows at the start (%s)" % d0_text)
+	main.aircraft.reset(main.airfield.thr - 30.0, 25.0)
+	main._update_hud(0.016)
+	var d1_text: String = main.hud._dist.text
+	check(d1_text.contains("30"), "...counting metres to the threshold (%s)" % d1_text)
+	main.aircraft.reset(main.airfield.thr + 20.0, 5.0)
+	main._update_hud(0.016)
+	check(main.hud._dist.text.begins_with("ON RUNWAY"), "...then metres of runway left (%s)" % main.hud._dist.text)
+	# hazards vs scenery
+	var af2 = main.airfield
+	var haz_ok: bool = af2._trees[0].get_child(0).material_overlay != null and af2._trees[0].get_child(1).material_overlay != null
+	check(haz_ok and af2._hill.material_overlay != null and af2._rwy.material_overlay != null and af2._ground.material_overlay != null, "hazards (trees, hill), the runway and the ground have black outlines")
+	var scen_ok: bool = af2._deco[0].get_child(0).material_overlay == null and af2._deco[0].get_child(1).material_overlay == null
+	scen_ok = scen_ok and af2._far_hills[0].material_overlay == null and af2._clouds[0].get_child(0).material_overlay == null
+	check(scen_ok, "scenery (background trees, far hills, clouds) has no outlines")
+	var sky: Color = af2.SKY_COLOR
+	var haz_crown: Color = af2._trees[0].get_child(1).material_override.albedo_color
+	var sc_crown: Color = af2._deco[0].get_child(1).material_override.albedo_color
+	var haz_d := Vector3(haz_crown.r - sky.r, haz_crown.g - sky.g, haz_crown.b - sky.b).length()
+	var sc_d := Vector3(sc_crown.r - sky.r, sc_crown.g - sky.g, sc_crown.b - sky.b).length()
+	check(sc_d < haz_d * 0.6, "scenery is faded toward the sky colour (distance %.2f vs hazard %.2f)" % [sc_d, haz_d])
+	var hill_c: Color = af2._far_hills[0].material_override.albedo_color
+	var hill_d := Vector3(hill_c.r - sky.r, hill_c.g - sky.g, hill_c.b - sky.b).length()
+	check(hill_d < haz_d * 0.6, "...and so are the far hills (%.2f)" % hill_d)
+	check(af2._deco[0].get_child(1).material_override.shading_mode == BaseMaterial3D.SHADING_MODE_UNSHADED, "scenery is flat-lit (lower contrast)")
+	# parallax: scenery scrolls slower than the play layer
+	af2.update(0.016, 0.0, 54.0, 0.0)
+	var d_off0: float = af2._deco[5].position.x - 0.0
+	var h_off0: float = af2._far_hills[5].position.x - 0.0
+	var c_off0: float = af2._clouds[2].position.x - 0.0
+	af2.update(0.0, 100.0, 54.0, 0.0)
+	var d_move: float = (af2._deco[5].position.x - 100.0) - d_off0
+	var h_move: float = (af2._far_hills[5].position.x - 100.0) - h_off0
+	var c_move: float = (af2._clouds[2].position.x - 100.0) - c_off0
+	check(d_move < -30.0 and d_move > -80.0, "background trees scroll slower than the play layer (camera +100 -> they move %.0f)" % d_move)
+	check(h_move > d_move and h_move > -45.0, "far hills scroll slower still (%.0f)" % h_move)
+	check(c_move > h_move and c_move > -95.0, "clouds slowest (%.0f)" % c_move)
+	# obstruction beacons on real hazards only
+	var found_tree := false
+	var found_hill := false
+	var found_flat := false
+	for i in 80:
+		main.rng.seed = 900 + i
+		af2.generate(4 + i % 9, main.rng)
+		af2.build()
+		if af2.terrain == AF.TREES:
+			found_tree = true
+			if not (af2._beacons[0].visible and not af2._beacons[1].visible):
+				check(false, "trees get a beacon on the tallest tree")
+		if af2.terrain == AF.HILL:
+			found_hill = true
+			if not (af2._beacons[1].visible and not af2._beacons[0].visible):
+				check(false, "the hill gets a beacon on its peak")
+		if af2.terrain == AF.FLAT:
+			found_flat = true
+			if af2._beacons[0].visible or af2._beacons[1].visible:
+				check(false, "no beacons on a flat field")
+	check(found_tree and found_hill and found_flat, "(trees, hill and flat fields all came up)")
+	# PAPI
+	new_round(530, 1)
+	var af3 = main.airfield
+	check(absf(af3.papi_x - af3.aim_x) < 1.0, "the PAPI sits at the aim markers")
+	check(af3._papi_mats.size() == 4, "four PAPI lights")
+	var dxp: float = 100.0
+	var px: float = af3.papi_x - dxp
+	var expect := {1.6: 4, 1.1: 3, 1.0: 2, 0.9: 1, 0.5: 0}
+	for ratio in expect:
+		af3.update_papi(px, ratio * af3.papi_slope * dxp)
+		var whites := 0
+		for m in af3._papi_mats:
+			if m.albedo_color.g > 0.5:
+				whites += 1
+		check(af3.papi_white == expect[ratio] and whites == expect[ratio], "PAPI at %.1fx the glide slope: %d white, %d red" % [ratio, whites, 4 - whites])
+	af3.update_papi(px, 1.0 * af3.papi_slope * dxp)
+	check(af3.papi_white == 2 and af3._papi_mats[0].albedo_color.g > 0.5 and af3._papi_mats[3].albedo_color.g < 0.5, "on the glide path: two white, two red")
+	af3.update_papi(af3.papi_x - 5.0, 40.0)
+	check(af3.papi_white == 2, "close in, the PAPI holds its last state")
+	new_round(531, 1)
+	var af4 = main.airfield
+	var ratio0: float = (af4.start_altitude / (af4.papi_x - main.aircraft.x)) / af4.papi_slope
+	var n0 := 0
+	for k in 4:
+		if ratio0 > 1.0 + (float(k) - 1.5) * float(tn.papi_band):
+			n0 += 1
+	check(af4.papi_white == n0 and af4._papi_root.visible, "the PAPI shows the right state from the very start of the approach (%d white)" % n0)
+	main.aircraft.reset(0.0, af4.start_altitude * 1.8)
+	main.advance(1.0 / 60.0)
+	check(af4.papi_white == 4, "well above the path: all white")
+	main.aircraft.reset(0.0, af4.start_altitude * 0.4)
+	main.advance(1.0 / 60.0)
+	check(af4.papi_white == 0, "well below the path: all red")
+	main.landings = 0
+	new_round(532, 1)
+	check(main.hud._hint.text.contains("PAPI"), "the round-1 hint explains the PAPI")
+
 	print("== 9. debug flags / frame time ==  [nodes %d]" % nodes())
 	DF.parse(["nofx=smoke,shake", "perf", "round=4", "seed=9", "bogus"] as Array[String])
 	check(DF.off("smoke") and DF.off("shake") and not DF.off("popup"), "?nofx=smoke,shake switches just those off")

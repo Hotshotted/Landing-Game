@@ -37,6 +37,11 @@ var _cam_w := 54.0
 var _cam_x := 0.0
 var _cam_y := 0.0
 var _cam_dx := 0.0
+var _tilt := 9.0
+var _full_w := 120.0          # this round's wide framing (plane start .. runway end) ...
+var _full_left := 0.0         # ... and its left edge
+var _start_x := 0.0           # where the plane started this approach
+var _dist_key := -1           # what the runway distance readout shows (rebuilt only when it changes)
 var _after_fade_over := false
 var _death_time := 0.0
 var _warming := false
@@ -61,7 +66,7 @@ func _ready() -> void:
 	camera.keep_aspect = Camera3D.KEEP_WIDTH
 	camera.near = 0.1
 	camera.far = 400.0
-	camera.size = Tuning.view_width_high
+	camera.size = Tuning.view_width_low
 	_setup_environment()
 	airfield = Airfield.new()
 	add_child(airfield)
@@ -177,6 +182,10 @@ func _begin_round() -> void:
 	var r := Tuning.ramp(round_no)
 	wind.reset(airfield.wind_base, rng, rng.randf_range(2.0, 3.5))
 	aircraft.reset(0.0, airfield.start_altitude)
+	_start_x = aircraft.x
+	_compute_full_frame()
+	airfield.update_papi(aircraft.x, aircraft.y)
+	_dist_key = -1
 	_graded = false
 	_awarded = 0
 	_timer = 0.0
@@ -186,7 +195,7 @@ func _begin_round() -> void:
 	hud.set_round(round_no)
 	hud.set_runway("%s  %d m  %s" % [Airfield.SURFACE_NAMES[airfield.surface].to_upper(), int(airfield.rwy_len), _terrain_text()])
 	hud.set_wind(wind.head())
-	hud.set_hint("Drag UP to raise the nose, DOWN to lower it.\nFlare just before touchdown." if round_no == 1 and landings == 0 else "")
+	hud.set_hint("Drag UP to raise the nose, DOWN to lower it.\nKeep the PAPI lights 2 white + 2 red.\nFlare just before touchdown." if round_no == 1 and landings == 0 else "")
 	hud.set_fade_now(hud.fade_alpha())
 	hud.fade_to(0.0)
 	_gust_scale = 0.5 + 0.5 * r
@@ -299,6 +308,7 @@ func _step_approach(dt: float) -> void:
 		hud.flash_gust()
 		sfx.play(Sfx.WHOOSH, rng.randf_range(0.9, 1.2), -12.0)
 	aircraft.consume_input(dt)
+	airfield.update_papi(aircraft.x, aircraft.y)
 	var n := maxi(ceili(dt / Tuning.sim_step), 1)
 	var h := dt / float(n)
 	for i in n:
@@ -429,38 +439,49 @@ func _show_over() -> void:
 
 # ---------- camera / HUD ----------
 
+## This round's wide framing: the plane at the left edge and the whole runway on screen.
+func _compute_full_frame() -> void:
+	var span := airfield.rwy_end + 30.0 - _start_x
+	_full_w = clampf(span * 1.1, Tuning.view_width_low * 1.5, Tuning.view_width_full_max)
+	_full_left = _start_x - 0.07 * _full_w
+
+## 0 = the wide framing at the start of the approach, 1 = the close flare framing. Driven by the distance to the aim
+## markers (and forced by a low altitude), eased so the zoom starts and ends gently.
+func _closeness() -> float:
+	var d0 := maxf(airfield.aim_x - _start_x, 1.0)
+	var d := airfield.aim_x - aircraft.x
+	var by_dist := clampf((d0 - d) / maxf(d0 - Tuning.zoom_close_distance, 1.0), 0.0, 1.0)
+	var by_alt := clampf((Tuning.zoom_high_altitude - aircraft.y) / maxf(Tuning.zoom_high_altitude - Tuning.zoom_low_altitude, 1.0), 0.0, 1.0)
+	return smoothstep(0.0, 1.0, maxf(by_dist, by_alt))
+
 func _snap_camera() -> void:
-	_cam_w = Tuning.view_width_high
-	_cam_x = aircraft.x + _cam_w * (0.5 - Tuning.plane_screen_x)
-	_cam_y = _target_cam_y(_cam_w)
-	_cam_dx = 0.0
-	_apply_camera(0.0)
-
-func _view_width_for(alt: float) -> float:
-	var t := clampf((alt - Tuning.zoom_low_altitude) / maxf(Tuning.zoom_high_altitude - Tuning.zoom_low_altitude, 1.0), 0.0, 1.0)
-	return lerpf(Tuning.view_width_low, Tuning.view_width_high, t)
-
-func _target_cam_y(width: float) -> float:
-	var aspect := _aspect()
-	var h := width * aspect
-	return -Tuning.ground_screen_y * h + h * 0.5
+	_update_camera(0.0, true)
 
 func _aspect() -> float:
 	var vs := get_viewport().get_visible_rect().size
 	return vs.y / maxf(vs.x, 1.0)
 
-func _update_camera(dt: float) -> void:
-	var k := 1.0 - exp(-Tuning.camera_smoothing * dt) if dt > 0.0 else 0.0
-	_cam_w = lerpf(_cam_w, _view_width_for(aircraft.y), k)
+## Frame the camera: width from the zoom progress, the left edge sliding from "plane at the far left, runway ahead"
+## to "plane at plane_screen_x", the tilt and ground height easing with the width. `snap` jumps there at once.
+func _update_camera(dt: float, snap: bool = false) -> void:
+	var k := 1.0 if snap else (1.0 - exp(-Tuning.camera_smoothing * dt) if dt > 0.0 else 0.0)
+	var b := _closeness()
+	_cam_w = lerpf(_cam_w, lerpf(_full_w, Tuning.view_width_low, b), k)
+	var left := lerpf(_full_left, aircraft.x - _cam_w * Tuning.plane_screen_x, b)
 	var old_x := _cam_x
-	_cam_x = aircraft.x + _cam_w * (0.5 - Tuning.plane_screen_x)
-	_cam_dx = _cam_x - old_x
-	_cam_y = lerpf(_cam_y, _target_cam_y(_cam_w), k)
-	_apply_camera(dt)
+	_cam_x = left + _cam_w * 0.5
+	_cam_dx = 0.0 if snap else _cam_x - old_x
+	var wide := clampf((_cam_w - Tuning.view_width_low) / 200.0, 0.0, 1.0)
+	_tilt = lerpf(Tuning.camera_tilt_deg, Tuning.camera_tilt_wide_deg, wide)
+	var h := _cam_w * _aspect()
+	var ground_y := lerpf(Tuning.ground_screen_y, Tuning.ground_screen_y_wide, wide)
+	_cam_y = lerpf(_cam_y, (0.5 - ground_y) * h / cos(deg_to_rad(_tilt)), k)
+	aircraft.set_view_scale(_cam_w)
+	_apply_camera()
 
-func _apply_camera(_dt: float) -> void:
+func _apply_camera() -> void:
 	camera.size = _cam_w
-	var tilt := deg_to_rad(Tuning.camera_tilt_deg)
+	var tilt := deg_to_rad(_tilt)
 	var dist := 80.0
 	var ox := 0.0
 	var oy := 0.0
@@ -475,7 +496,26 @@ func _update_hud(dt: float) -> void:
 	hud.set_flight(aircraft.y, aircraft.vy, aircraft.s, flying and not hud.overlay_visible)
 	if state == APPROACH or state == ROLLOUT:
 		hud.set_wind(wind.head())
+		_update_distance()
+	elif _dist_key != -1:
+		_dist_key = -1
+		hud.set_distance("")
 	hud.update(dt)
+
+## Runway distance readout: metres to the threshold, then metres of runway left. Text rebuilt only when the number changes.
+func _update_distance() -> void:
+	var to_thr := airfield.thr - aircraft.x
+	var key := -1
+	var text := ""
+	if to_thr > 0.5:
+		key = int(roundf(to_thr))
+		text = "RUNWAY  %d m" % key
+	elif aircraft.x <= airfield.rwy_end:
+		key = 100000 + int(roundf(airfield.rwy_end - aircraft.x))
+		text = "ON RUNWAY  %d m left" % (key - 100000)
+	if key != _dist_key:
+		_dist_key = key
+		hud.set_distance(text)
 
 func _on_tuning_changed(property: String) -> void:
 	if property == "outline_thickness":

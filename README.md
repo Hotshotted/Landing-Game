@@ -10,6 +10,10 @@ Side view, low-poly primitives with black outlines.
 - Each round the plane comes in from the left on a descent toward a runway.
 - **Drag up / down** to pitch the nose (relative drag, 1:1, like sky-dodge). Hold the nose up near the ground to **flare**.
   Flare too early and the plane floats, runs out of speed and drops hard; too late and it slams in.
+- Every approach starts framed on the whole runway and zooms in as you close; a runway-distance readout and four **PAPI** lights beside
+  the aim markers show the glide path (all white = too high, 2 white + 2 red = on path, all red = too low).
+- Hazards (trees / hill before the field, the runway) have full colour and black outlines, with a blinking beacon on the tallest;
+  pure scenery (background trees, far hills, clouds) is faded toward the sky, unoutlined and scrolls slower (parallax).
 - Wind: a steady head/tailwind plus gusts that bump the plane (windsock, drifting streaks, wind readout).
 - Each landing is graded on touchdown **sink rate**, **touchdown point** (aim markers) and **no bounce**:
   *Greaser!* / Smooth / Good / Firm / Hard. Very hard, off-runway, trees/hill and overrun landings are crashes.

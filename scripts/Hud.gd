@@ -17,6 +17,7 @@ var _speed_back: ColorRect
 var _stall_mark: ColorRect
 var _speed_label: Label
 var _gust: Label
+var _dist: Label
 var _hint: Label
 var _pop_title: Label
 var _pop_sub: Label
@@ -58,10 +59,12 @@ func _ready() -> void:
 	_place(_wind, 0.5, 0, -270, 18, 540, 52)
 	_runway = _label(30, HORIZONTAL_ALIGNMENT_CENTER)
 	_place(_runway, 0.5, 0, -270, 72, 540, 40)
+	_dist = _label(34, HORIZONTAL_ALIGNMENT_CENTER)
+	_place(_dist, 0.5, 0, -270, 110, 540, 42)
 	_gust = _label(36, HORIZONTAL_ALIGNMENT_CENTER)
 	_gust.modulate = Color(1, 0.9, 0.4, 0)
 	_gust.text = "GUST!"
-	_place(_gust, 0.5, 0, -270, 118, 540, 44)
+	_place(_gust, 0.5, 0, -270, 154, 540, 44)
 	_alt = _label(32, HORIZONTAL_ALIGNMENT_RIGHT)
 	_place(_alt, 1, 0, -300, 118, 280, 40)
 	_sink = _label(46, HORIZONTAL_ALIGNMENT_RIGHT)
@@ -85,7 +88,7 @@ func _ready() -> void:
 	_speed_label.text = "AIRSPEED"
 	_hint = _label(40, HORIZONTAL_ALIGNMENT_CENTER)
 	_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_place(_hint, 0.5, 1, -440, -330, 880, 150)
+	_place(_hint, 0.5, 1, -440, -380, 880, 200)
 	_pop_title = _label(140, HORIZONTAL_ALIGNMENT_CENTER)
 	_place(_pop_title, 0, 0.3, 0, 0, 1080, 170)
 	_pop_title.anchor_right = 1.0
@@ -210,6 +213,10 @@ func set_flight(alt: float, vy: float, s: float, show: bool) -> void:
 	_speed_bar.color = Color(1, 0.35, 0.3) if s < Tuning.stall_speed + 0.04 else Color(0.5, 0.95, 0.6)
 	_stall_mark.offset_left = -300.0 + 280.0 * clampf(Tuning.stall_speed / 1.3, 0.0, 1.0)
 	_stall_mark.offset_right = _stall_mark.offset_left + 4.0
+
+## Runway distance readout under the runway info ("" hides it).
+func set_distance(text: String) -> void:
+	_dist.text = text
 
 func set_hint(text: String) -> void:
 	_hint.text = text
