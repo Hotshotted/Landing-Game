@@ -49,6 +49,14 @@ const ENTRIES := [
 	["decel_dirt", "Braking, dirt", 1.0, 15.0, 0.1],
 	["path_error_max", "Approach miss (max)", 0.0, 40.0, 1.0],
 	["ramp_rounds", "Rounds to full difficulty", 1.0, 30.0, 1.0],
+	["engine_out_drag", "Engine out: speed decay", 0.0, 0.12, 0.005],
+	["turb_strength", "Turbulence strength", 0.0, 4.0, 0.1],
+	["shear_sink", "Wind shear downdraft", 0.0, 8.0, 0.1],
+	["shear_tele_time", "Wind shear warning (s)", 0.3, 3.0, 0.1],
+	["fog_end_min", "Fog visibility (min)", 40.0, 300.0, 5.0],
+	["carrier_wire_half", "Carrier wire zone", 4.0, 30.0, 0.5],
+	["water_rough_mult", "Rough water sink x", 1.0, 3.0, 0.05],
+	["card_time", "Title card time (s)", 0.3, 4.0, 0.1],
 	["papi_hud_size", "HUD PAPI: light size", 50.0, 200.0, 1.0],
 	["papi_hud_gap", "HUD PAPI: gap", 0.0, 60.0, 1.0],
 	["papi_hud_y", "HUD PAPI: height (screen fraction)", 0.1, 0.6, 0.01],
@@ -191,6 +199,22 @@ func build() -> void:
 	buttons.add_child(copy)
 	buttons.add_child(next)
 	column.add_child(buttons)
+	# force a scenario / weather for every following approach (AUTO = the normal mix); press "Next round" to see it
+	var force_row := HBoxContainer.new()
+	force_row.add_theme_constant_override("separation", 20)
+	var scn_btn := _make_button("Scenario: AUTO", 28)
+	scn_btn.set_meta("debug", "force_scenario")
+	scn_btn.pressed.connect(func():
+		Scenarios.forced_scenario = Scenarios.forced_scenario + 1 if Scenarios.forced_scenario + 1 < Scenarios.COUNT else -1
+		scn_btn.text = "Scenario: " + (Scenarios.KEYS[Scenarios.forced_scenario].to_upper() if Scenarios.forced_scenario >= 0 else "AUTO"))
+	var wx_btn := _make_button("Weather: AUTO", 28)
+	wx_btn.set_meta("debug", "force_weather")
+	wx_btn.pressed.connect(func():
+		Scenarios.forced_weather = Scenarios.forced_weather + 1 if Scenarios.forced_weather + 1 < Scenarios.WX_COUNT else -1
+		wx_btn.text = "Weather: " + (Scenarios.WX_KEYS[Scenarios.forced_weather].to_upper() if Scenarios.forced_weather >= 0 else "AUTO"))
+	force_row.add_child(scn_btn)
+	force_row.add_child(wx_btn)
+	column.add_child(force_row)
 	_out = _make_label("", 26, HORIZONTAL_ALIGNMENT_LEFT)
 	_out.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_out.custom_minimum_size = Vector2(0, 150)

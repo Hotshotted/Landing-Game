@@ -19,6 +19,10 @@ var gs := 0.0           # ground speed
 var on_ground := false
 var touching := false   # finger down?
 var wobble := 0.0       # gust kick on the drawn nose (degrees)
+var power := 1.0        # 1 = engine running, 0 = engine out (no speed recovery, a little drag)
+var sink_mult := 1.0    # multiplies the approach sink rate (an engine-out glide is steeper)
+var gy := 0.0           # height of the ground under the plane (mountain slope, carrier deck, truck bed)
+var ground_tilt := 0.0  # slope of that ground in degrees (the drawn plane follows it while rolling)
 var _wobble_v := 0.0
 var _pending_drag := 0.0
 var _vis_pitch := 0.0
@@ -26,6 +30,9 @@ var _view_scale := 1.0   # drawn bigger when the camera is zoomed far out, so th
 var _pivot: Node3D
 var _prop: Node3D
 var _outline: ShaderMaterial
+var _gear: Array[Node3D] = []     # wheels and struts, hidden when the plane has floats (seaplane)
+var _floats: Array[Node3D] = []
+var _nav: Array[MeshInstance3D] = []   # navigation lights (shown at night)
 
 func _ready() -> void:
 	_outline = ShaderMaterial.new()
@@ -55,7 +62,7 @@ func clear_input() -> void:
 func reset(start_x: float, start_y: float) -> void:
 	x = start_x
 	y = start_y
-	vy = -Tuning.trim_sink
+	vy = -Tuning.trim_sink * sink_mult
 	s = 1.0
 	theta = 0.0
 	theta_target = 0.0
@@ -80,13 +87,14 @@ func consume_input(dt: float) -> void:
 ## One flight sub-step. `head` = total headwind, `gust_v` / `gust_h` = the current gust. Moves x and y.
 func step_air(h: float, head: float, gust_v: float, gust_h: float) -> void:
 	theta = move_toward(theta, theta_target, Tuning.pitch_rate * h)
-	s += (Tuning.speed_recover * (1.0 - s) - Tuning.speed_bleed * theta / 10.0) * h
+	s += (Tuning.speed_recover * power * (1.0 - s) - Tuning.speed_bleed * theta / 10.0 - (1.0 - power) * Tuning.engine_out_drag) * h
 	s = clampf(s, 0.2, 1.5)
 	var s_eff := s + gust_h * Tuning.gust_airspeed_effect
-	var target := -Tuning.trim_sink + Tuning.pitch_lift_gain * theta * clampf(s_eff, 0.0, 1.2)
+	var target := -Tuning.trim_sink * sink_mult + Tuning.pitch_lift_gain * theta * clampf(s_eff, 0.0, 1.2)
 	target -= maxf(Tuning.stall_speed - s_eff, 0.0) * Tuning.stall_sink_gain
-	if y < Tuning.ground_effect_height:
-		target += Tuning.ground_effect_lift * (1.0 - maxf(y, 0.0) / Tuning.ground_effect_height)
+	var agl := y - gy
+	if agl < Tuning.ground_effect_height:
+		target += Tuning.ground_effect_lift * (1.0 - maxf(agl, 0.0) / Tuning.ground_effect_height)
 	target += gust_v
 	if y >= Tuning.max_altitude:
 		target = minf(target, -1.0)
@@ -101,18 +109,18 @@ func step_air(h: float, head: float, gust_v: float, gust_h: float) -> void:
 func land() -> void:
 	on_ground = true
 	vy = 0.0
-	y = 0.0
+	y = gy
 
 ## Bounce: rebound upward with `v`; the plane is airborne again.
 func bounce(v: float) -> void:
 	on_ground = false
 	vy = v
-	y = 0.02
+	y = gy + 0.02
 	s = maxf(s, 0.8)    # the rebound keeps its speed
 
 ## One rolling sub-step with braking `decel`.
-func step_ground(h: float, decel: float) -> void:
-	gs = maxf(gs - decel * h, 0.0)
+func step_ground(h: float, decel: float, floor_speed: float = 0.0) -> void:
+	gs = maxf(gs - decel * h, floor_speed)   # (a moving deck / truck carries the plane along: it never stops below the deck speed)
 	x += gs * h
 	_wobble_v += (-60.0 * wobble - 6.0 * _wobble_v) * h
 	wobble += _wobble_v * h
@@ -120,6 +128,22 @@ func step_ground(h: float, decel: float) -> void:
 ## A gust kicks the nose (called by Main when a gust starts).
 func kick(sign_dir: float) -> void:
 	_wobble_v += sign_dir * Tuning.gust_wobble * 6.0
+
+## Seaplane: floats instead of wheels.
+func set_floats(on: bool) -> void:
+	for g in _gear:
+		g.visible = not on
+	for f in _floats:
+		f.visible = on
+
+## Night: light the navigation lights.
+func set_night(on: bool) -> void:
+	for n in _nav:
+		n.visible = on
+
+## Height above the ground under the plane.
+func agl() -> float:
+	return y - gy
 
 ## Draw the plane larger (and its outline thicker) the further the camera is zoomed out; collision is unaffected.
 func set_view_scale(view_w: float) -> void:
@@ -130,14 +154,15 @@ func set_view_scale(view_w: float) -> void:
 func update_visual(dt: float) -> void:
 	var goal := Tuning.pitch_visual_offset + theta * Tuning.pitch_visual_scale
 	if on_ground:
-		_vis_pitch = move_toward(_vis_pitch, 0.0, Tuning.nose_settle_rate * dt)
+		_vis_pitch = move_toward(_vis_pitch, ground_tilt, Tuning.nose_settle_rate * dt)
 		_pivot.rotation.z = deg_to_rad(_vis_pitch + wobble * 0.3)
 	else:
 		_vis_pitch = lerpf(_vis_pitch, goal, 1.0 - exp(-10.0 * dt))
 		_pivot.rotation.z = deg_to_rad(_vis_pitch + wobble)
 	_pivot.scale = Vector3.ONE * _view_scale
 	_pivot.position = Vector3(x, y + GEAR_H * _view_scale, 0.0)   # (the tyres stay on the ground however big it is drawn)
-	_prop.rotation.x += 45.0 * dt
+	if power > 0.0:
+		_prop.rotation.x += 45.0 * dt
 
 # ---------- model ----------
 
@@ -153,12 +178,33 @@ func _build_model() -> void:
 	var fin := PrismMesh.new()
 	_part(fin, Vector3(1.7, 1.9, 0.18), Vector3(-3.5, 1.4, 0.0), red)                          # fin
 	_part(BoxMesh.new(), Vector3(1.3, 0.55, 1.0), Vector3(0.9, 0.85, 0.0), Color(0.55, 0.8, 0.95)) # canopy
-	_part(BoxMesh.new(), Vector3(0.14, 0.9, 0.14), Vector3(0.5, -0.85, 0.5), dark)             # main gear struts
-	_part(BoxMesh.new(), Vector3(0.14, 0.9, 0.14), Vector3(0.5, -0.85, -0.5), dark)
-	_part(_wheel(), Vector3(0.76, 0.2, 0.76), Vector3(0.5, -1.32, 0.5), dark, Vector3(90, 0, 0))
-	_part(_wheel(), Vector3(0.76, 0.2, 0.76), Vector3(0.5, -1.32, -0.5), dark, Vector3(90, 0, 0))
-	_part(BoxMesh.new(), Vector3(0.12, 0.8, 0.12), Vector3(2.2, -0.8, 0.0), dark)              # nose gear
-	_part(_wheel(), Vector3(0.6, 0.18, 0.6), Vector3(2.2, -1.4, 0.0), dark, Vector3(90, 0, 0))
+	_gear.append(_part(BoxMesh.new(), Vector3(0.14, 0.9, 0.14), Vector3(0.5, -0.85, 0.5), dark))             # main gear struts
+	_gear.append(_part(BoxMesh.new(), Vector3(0.14, 0.9, 0.14), Vector3(0.5, -0.85, -0.5), dark))
+	_gear.append(_part(_wheel(), Vector3(0.76, 0.2, 0.76), Vector3(0.5, -1.32, 0.5), dark, Vector3(90, 0, 0)))
+	_gear.append(_part(_wheel(), Vector3(0.76, 0.2, 0.76), Vector3(0.5, -1.32, -0.5), dark, Vector3(90, 0, 0)))
+	_gear.append(_part(BoxMesh.new(), Vector3(0.12, 0.8, 0.12), Vector3(2.2, -0.8, 0.0), dark))              # nose gear
+	_gear.append(_part(_wheel(), Vector3(0.6, 0.18, 0.6), Vector3(2.2, -1.4, 0.0), dark, Vector3(90, 0, 0)))
+	# floats (seaplane): two long pontoons on struts, hidden unless the scenario uses them
+	for side in [-1.0, 1.0]:
+		var pont := _part(BoxMesh.new(), Vector3(4.6, 0.5, 0.55), Vector3(0.6, -1.45, side * 1.2), red)
+		var strut := _part(BoxMesh.new(), Vector3(0.14, 1.0, 0.14), Vector3(0.6, -0.85, side * 1.2), dark)
+		pont.visible = false
+		strut.visible = false
+		_floats.append(pont)
+		_floats.append(strut)
+	# navigation lights on the wing tips and tail (lit at night)
+	for nl in [[Vector3(0.3, -0.2, 4.4), Color(0.2, 1.0, 0.3)], [Vector3(0.3, -0.2, -4.4), Color(1.0, 0.15, 0.1)], [Vector3(-3.9, 0.9, 0.0), Color(1, 1, 1)]]:
+		var n := MeshInstance3D.new()
+		n.mesh = BoxMesh.new()
+		var nm := StandardMaterial3D.new()
+		nm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		nm.albedo_color = nl[1]
+		n.material_override = nm
+		n.position = nl[0]
+		n.scale = Vector3(0.45, 0.45, 0.45)
+		n.visible = false
+		_pivot.add_child(n)
+		_nav.append(n)
 	_prop = Node3D.new()
 	_prop.position = Vector3(4.0, 0.0, 0.0)
 	_pivot.add_child(_prop)

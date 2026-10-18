@@ -1,10 +1,10 @@
 class_name Main
 extends Node3D
-## Game flow: menu -> approach -> touchdown (graded) -> rollout -> fade -> next approach on a new random
-## runway. A crash (hard landing, off the runway, trees, overrun) is a strike; the third ends the run.
+## Game flow: menu -> title card -> approach -> touchdown (graded) -> rollout -> fade -> next approach (a new scenario and
+## weather on a new random runway). A crash (hard landing, off the runway, trees, overrun) is a strike; the third ends the run.
 ## Everything is built once in _ready (and pre-warmed behind a splash); restarts and new rounds reuse it.
 
-enum { MENU, APPROACH, ROLLOUT, CRASH, FADE, OVER }
+enum { MENU, APPROACH, ROLLOUT, CRASH, FADE, OVER, CARD }
 
 var rng := RandomNumberGenerator.new()
 var camera: Camera3D
@@ -16,6 +16,9 @@ var sfx: Sfx
 var hud: Hud
 var wind := Wind.new()
 var tune_panel: TunePanel
+var fog: FogOverlay
+var scenario := 0
+var weather := 0
 
 var state := MENU
 var round_no := 0
@@ -32,6 +35,7 @@ var _timer := 0.0                    # seconds in the current state
 var _graded := false                 # this approach's touchdown has been graded (a bounce is still flying)
 var _awarded := 0                    # points that landing gave (taken back if the bounce ends in a crash)
 var _shake := 0.0
+var _turb_shake := 0.0         # a steady little camera shake in turbulence
 var _puff_t := 0.0
 var _cam_w := 54.0
 var _cam_x := 0.0
@@ -42,6 +46,10 @@ var _full_w := 120.0          # this round's wide framing (plane start .. runway
 var _full_left := 0.0         # ... and its left edge
 var _start_x := 0.0           # where the plane started this approach
 var _dist_key := -1           # what the runway distance readout shows (rebuilt only when it changes)
+var _env: Environment
+var _last_scenario := -1
+var _arrested := false        # carrier: the hook has caught a wire
+var _shear_state := 0         # wind shear: 0 = not yet, 1 = warned (windsock snapped), 2 = hit
 var _after_fade_over := false
 var _death_time := 0.0
 var _warming := false
@@ -68,6 +76,10 @@ func _ready() -> void:
 	camera.far = 400.0
 	camera.size = Tuning.view_width_low
 	_setup_environment()
+	if DebugFlags.scenario_forced() >= 0:
+		Scenarios.forced_scenario = DebugFlags.scenario_forced()
+	if DebugFlags.weather_forced() >= 0:
+		Scenarios.forced_weather = DebugFlags.weather_forced()
 	airfield = Airfield.new()
 	add_child(airfield)
 	aircraft = Aircraft.new()
@@ -76,6 +88,8 @@ func _ready() -> void:
 	add_child(fx)
 	sfx = Sfx.new()
 	add_child(sfx)
+	fog = FogOverlay.new()
+	add_child(fog)
 	hud = Hud.new()
 	add_child(hud)
 	if DebugFlags.tune_enabled():
@@ -103,6 +117,7 @@ func _setup_environment() -> void:
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	env.ambient_light_color = Color(0.85, 0.88, 0.95)
 	env.ambient_light_energy = 0.55
+	_env = env
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)
@@ -174,13 +189,24 @@ func start_run() -> void:
 	_begin_round()
 	_snap_camera()
 
-## Choose and lay out the next runway and put the plane on its approach.
-func _begin_round() -> void:
+## Choose the scenario and weather, lay out the next runway and put the plane on its approach. `card` shows the title card
+## first (the plane waits); tests pass false.
+func _begin_round(card: bool = true) -> void:
 	round_no += 1
-	airfield.generate(round_no, rng)
+	var pick := Scenarios.pick(round_no, rng, _last_scenario)
+	scenario = pick.x
+	weather = pick.y
+	_last_scenario = scenario
+	airfield.generate(round_no, rng, scenario, weather)
 	airfield.build()
 	var r := Tuning.ramp(round_no)
 	wind.reset(airfield.wind_base, rng, rng.randf_range(2.0, 3.5))
+	aircraft.power = airfield.power
+	aircraft.sink_mult = airfield.sink_mult
+	aircraft.gy = 0.0
+	aircraft.ground_tilt = 0.0
+	aircraft.set_floats(scenario == Scenarios.WATER)
+	aircraft.set_night(airfield.night)
 	aircraft.reset(0.0, airfield.start_altitude)
 	_start_x = aircraft.x
 	_compute_full_frame()
@@ -188,17 +214,73 @@ func _begin_round() -> void:
 	_dist_key = -1
 	_graded = false
 	_awarded = 0
+	_arrested = false
+	_shear_state = 0
 	_timer = 0.0
 	_puff_t = 0.0
 	_shake = 0.0
+	_apply_environment()
 	state = APPROACH
 	hud.set_round(round_no)
 	hud.set_runway("%s  %d m  %s" % [Airfield.SURFACE_NAMES[airfield.surface].to_upper(), int(airfield.rwy_len), _terrain_text()])
+	hud.set_scenario_text(_scenario_line())
 	hud.set_wind(wind.head())
 	hud.set_hint("Drag UP to raise the nose, DOWN to lower it.\nKeep the PAPI lights 2 white + 2 red.\nFlare just before touchdown." if round_no == 1 and landings == 0 else "")
 	hud.set_fade_now(hud.fade_alpha())
 	hud.fade_to(0.0)
 	_gust_scale = 0.5 + 0.5 * r
+	if weather == Scenarios.TURBULENCE:
+		_gust_scale *= 1.3
+	if card:
+		state = CARD
+		hud.show_card(Scenarios.NAMES[scenario], Scenarios.WX_NAMES[weather] if weather != Scenarios.CLEAR else "", _card_blurb(), Scenarios.COLORS[scenario])
+
+## (tests) is the mountain ramp drawn?
+func _ramp_visible_for_test() -> bool:
+	return airfield._ramp_root.visible and airfield._plateau.visible
+
+func _card_blurb() -> String:
+	var t: String = Scenarios.BLURBS[scenario]
+	if weather != Scenarios.CLEAR:
+		t += "\n" + Scenarios.WX_BLURBS[weather]
+	return t
+
+func _scenario_line() -> String:
+	var t: String = Scenarios.NAMES[scenario]
+	if weather != Scenarios.CLEAR:
+		t += "  -  " + Scenarios.WX_NAMES[weather]
+	return t
+
+## The title card is over (timer or tap): the approach begins.
+func _end_card() -> void:
+	if state != CARD:
+		return
+	state = APPROACH
+	_timer = 0.0
+	hud.hide_card()
+
+## Night / rain tint the sky and the light; fog and rain are drawn by the FogOverlay (see _update_fog).
+func _apply_environment() -> void:
+	var sky := Color(0.55, 0.78, 0.96)
+	var ambient := Color(0.85, 0.88, 0.95)
+	var energy := 0.55
+	var sun_energy := 1.0
+	if airfield.night:
+		sky = Color(0.03, 0.05, 0.12)
+		ambient = Color(0.4, 0.46, 0.7)
+		energy = 0.34
+		sun_energy = 0.14
+	elif weather == Scenarios.RAIN:
+		sky = Color(0.5, 0.57, 0.65)
+		ambient = Color(0.75, 0.78, 0.85)
+		sun_energy = 0.7
+	elif weather == Scenarios.FOG:
+		sky = Color(0.78, 0.83, 0.88)
+		sun_energy = 0.85
+	_env.background_color = sky
+	_env.ambient_light_color = ambient
+	_env.ambient_light_energy = energy
+	sun.light_energy = sun_energy
 
 var _gust_scale := 0.5
 
@@ -212,7 +294,7 @@ func _terrain_text() -> String:
 
 ## ?tune "Next round" and tests: abandon this approach and fly a new one.
 func skip_round() -> void:
-	if state == APPROACH or state == ROLLOUT:
+	if state == APPROACH or state == ROLLOUT or state == CARD:
 		_begin_round()
 		_snap_camera()
 
@@ -277,9 +359,14 @@ func advance(dt: float) -> void:
 	if dt > 0.0:
 		_timer += dt
 		match state:
+			CARD:
+				if _timer >= Tuning.card_time:
+					_end_card()
 			APPROACH:
+				airfield.step_deck(dt)
 				_step_approach(dt)
 			ROLLOUT:
+				airfield.step_deck(dt)
 				_step_rollout(dt)
 			CRASH:
 				if _timer >= Tuning.crash_pause:
@@ -297,7 +384,8 @@ func advance(dt: float) -> void:
 	aircraft.update_visual(dt)
 	_update_camera(dt)
 	airfield.drift_streaks(dt, _cam_dx, wind.head(), _cam_w)
-	airfield.update(dt, _cam_x, _cam_w, wind.head())
+	airfield.update(dt, _cam_x, _cam_w, wind.head(), _cam_y)
+	_update_fog()
 	_update_hud(dt)
 
 func _step_approach(dt: float) -> void:
@@ -305,25 +393,83 @@ func _step_approach(dt: float) -> void:
 	if wind.gust_started:
 		wind.gust_started = false
 		aircraft.kick(1.0 if wind.gust_v > 0.0 else -1.0)
-		hud.flash_gust()
+		hud.flash_warning("GUST!", Color(1, 0.9, 0.4))
 		sfx.play(Sfx.WHOOSH, rng.randf_range(0.9, 1.2), -12.0)
+	# weather: turbulence builds as the plane nears the runway; wind shear is warned (windsock snaps) then hits just before the flare
+	if airfield.turb > 0.0:
+		var zone := clampf(1.0 - (airfield.thr - aircraft.x) / Tuning.turb_zone, 0.0, 1.0)
+		wind.update_turbulence(dt, airfield.turb, zone)
+		_turb_shake = 0.18 * zone
+	else:
+		_turb_shake = 0.0
+	if airfield.shear_back > 0.0 and _shear_state < 2:
+		var to_aim := airfield.aim_x - aircraft.x
+		if _shear_state == 0 and to_aim <= airfield.shear_back + aircraft.gs * Tuning.shear_tele_time:
+			_shear_state = 1
+			airfield.snap_sock()
+			hud.flash_warning("WIND SHEAR!", Color(1.0, 0.45, 0.35))
+			sfx.play(Sfx.WHOOSH, 0.7, -4.0)
+		if _shear_state == 1 and to_aim <= airfield.shear_back:
+			_shear_state = 2
+			wind.start_shear()
+			aircraft.kick(-1.0)
+	wind.update_shear(dt)
 	aircraft.consume_input(dt)
 	airfield.update_papi(aircraft.x, aircraft.y)
 	var n := maxi(ceili(dt / Tuning.sim_step), 1)
 	var h := dt / float(n)
 	for i in n:
-		aircraft.step_air(h, wind.head(), wind.gust_v, wind.gust_h)
-		# trees / hill
+		aircraft.gy = airfield.ground_y(aircraft.x)
+		aircraft.step_air(h, wind.head(), wind.v_total(), wind.h_total())
+		# trees / hill / the stern of the carrier or truck
 		var obstacle := airfield.height_at(aircraft.x)
 		if obstacle > 0.0 and aircraft.y < obstacle and not DebugFlags.god_enabled():
-			_crash("Hit the trees!" if airfield.terrain == Airfield.TREES else "Hit the hill!")
+			_crash(_hazard_text())
 			return
-		if aircraft.y <= 0.0:
+		var gy := airfield.ground_y(aircraft.x)
+		if aircraft.y <= gy:
+			aircraft.gy = gy
 			_touchdown()
 			return
 		if aircraft.x > airfield.rwy_end + 4.0 and not DebugFlags.god_enabled():
-			_crash("Flew past the runway!")
+			_crash(_flew_past_text())
 			return
+
+func _hazard_text() -> String:
+	match scenario:
+		Scenarios.CARRIER:
+			return "Hit the stern!"
+		Scenarios.TRUCK:
+			return "Hit the tailgate!"
+	return "Hit the trees!" if airfield.terrain == Airfield.TREES else "Hit the hill!"
+
+func _flew_past_text() -> String:
+	match scenario:
+		Scenarios.CARRIER:
+			return "Missed the deck!"
+		Scenarios.TRUCK:
+			return "Overshot the truck!"
+		Scenarios.WATER:
+			return "Flew on over the water!"
+	return "Flew past the runway!"
+
+func _off_text() -> String:
+	match scenario:
+		Scenarios.CARRIER:
+			return "Splash! Short of the deck"
+		Scenarios.TRUCK:
+			return "Missed the truck!"
+		Scenarios.MOUNTAIN:
+			return "Hit the slope!"
+	return "Off the runway!"
+
+func _overrun_text() -> String:
+	match scenario:
+		Scenarios.CARRIER:
+			return "Off the end of the deck!"
+		Scenarios.TRUCK:
+			return "Fell off the truck!"
+	return "Overran the runway!"
 
 func _step_rollout(dt: float) -> void:
 	wind.update(dt, rng, _gust_scale * 0.3)
@@ -331,33 +477,49 @@ func _step_rollout(dt: float) -> void:
 	var n := maxi(ceili(dt / Tuning.sim_step), 1)
 	var h := dt / float(n)
 	for i in n:
-		aircraft.step_ground(h, decel)
-		if aircraft.x > airfield.rwy_end and aircraft.gs > Tuning.overrun_speed and not DebugFlags.god_enabled():
-			_crash("Overran the runway!")
+		# carrier: the hook catches a wire if the plane rolls over the wire zone
+		if airfield.has_wires and not _arrested and absf(aircraft.x - airfield.aim_x) <= Tuning.carrier_wire_half:
+			_arrested = true
+			hud.flash_warning("TRAPPED!", Color(0.5, 0.95, 1.0))
+		aircraft.step_ground(h, Tuning.carrier_arrest_decel if _arrested else decel, airfield.deck_speed)
+		aircraft.gy = airfield.ground_y(aircraft.x)
+		aircraft.y = aircraft.gy
+		aircraft.ground_tilt = rad_to_deg(atan(airfield.slope_at(aircraft.x)))
+		if airfield.surface != Airfield.WATER and aircraft.x > airfield.rwy_end and aircraft.gs > airfield.deck_speed + Tuning.overrun_speed and not DebugFlags.god_enabled():
+			_crash(_overrun_text())
 			return
 	# puffs of dust / smoke while the wheels still bite hard
 	_puff_t -= dt
-	if _puff_t <= 0.0 and aircraft.gs > 6.0 and (airfield.surface != Airfield.ASPHALT or _timer < 0.6):
+	if _puff_t <= 0.0 and aircraft.gs > airfield.deck_speed + 6.0 and (airfield.surface != Airfield.ASPHALT or _timer < 0.6):
 		_puff_t = Tuning.roll_puff_interval * 3.0
-		fx.smoke(Vector3(aircraft.x - 1.0, 0.3, 1.0), 0.25 + aircraft.gs / 60.0, airfield.smoke_color())
-	var rest := aircraft.gs <= Tuning.rollout_rest_speed and _timer >= Tuning.rollout_min_time
+		fx.smoke(Vector3(aircraft.x - 1.0, aircraft.gy + 0.3, 1.0), 0.25 + (aircraft.gs - airfield.deck_speed) / 60.0, airfield.smoke_color())
+	var rest := aircraft.gs <= airfield.deck_speed + Tuning.rollout_rest_speed and _timer >= Tuning.rollout_min_time
 	if rest or _timer >= Tuning.rollout_max_time:
 		_finish_round(false)
 
 # ---------- touchdown ----------
 
 func _touchdown() -> void:
-	var sink := -aircraft.vy
 	var px := aircraft.x
-	aircraft.y = 0.0
-	var wheels := Vector3(px - 0.4, 0.25, 1.0)
+	var gy := airfield.ground_y(px)
+	# sink rate relative to the ground: an uphill slope rises to meet the plane, so it adds to the closing speed
+	var sink := maxf(-(aircraft.vy - aircraft.gs * airfield.slope_at(px)), 0.0)
+	aircraft.y = gy
+	aircraft.gy = gy
+	var wheels := Vector3(px - 0.4, gy + 0.25, 1.0)
+	var rough := airfield.surface == Airfield.WATER and not airfield.in_lane(px)
+	if rough:
+		sink *= Tuning.water_rough_mult    # rough water outside the calm lane: a much harder landing
 	if Grading.is_crash_sink(sink) and not DebugFlags.god_enabled():
-		_crash("Too hard!" if airfield.on_runway(px) else "Off the runway!")
+		_crash("Too hard!" if airfield.on_runway(px) else _off_text())
 		return
 	if not airfield.on_runway(px) and not DebugFlags.god_enabled():
-		_crash("Off the runway!")
+		_crash(_off_text())
 		return
-	var bounced := sink > Tuning.bounce_sink
+	if airfield.has_wires and px > airfield.aim_x + Tuning.carrier_wire_half + 2.0 and not DebugFlags.god_enabled():
+		_crash("Missed the wires!")      # a bolter: there is no going around, so it is a crash
+		return
+	var bounced := sink > Tuning.bounce_sink * (0.5 if rough else 1.0)
 	if not _graded:
 		_graded = true
 		last_result = Grading.evaluate(sink, px - airfield.aim_x, airfield.rwy_len, bounced)
@@ -371,6 +533,8 @@ func _touchdown() -> void:
 		var g: int = last_result["grade"]
 		var sub := "Sink %.1f   %s%.0f m from the markers   %s   +%d" % [
 			sink, "+" if px >= airfield.aim_x else "", px - airfield.aim_x, "BOUNCED" if bounced else "no bounce", _awarded]
+		if rough:
+			sub = "ROUGH WATER   " + sub
 		hud.popup(Grading.NAMES[g], sub, Grading.COLORS[g], Tuning.popup_time)
 		hud.set_hint("")
 		if g <= 1:
@@ -385,7 +549,7 @@ func _touchdown() -> void:
 	if sink > 1.2 and not DebugFlags.off("haptic"):
 		Input.vibrate_handheld(int(clampf(sink * 25.0, 20.0, 150.0)))
 	if bounced:
-		aircraft.bounce(sink * Tuning.bounce_restitution)
+		aircraft.bounce(sink * Tuning.bounce_restitution * (1.35 if rough else 1.0))
 		return
 	aircraft.land()
 	state = ROLLOUT
@@ -405,8 +569,8 @@ func _crash(reason: String) -> void:
 	hud.set_strikes(strikes)
 	hud.popup("CRASH", reason, Color(1.0, 0.35, 0.3), Tuning.crash_pause)
 	hud.set_hint("")
-	fx.crash(Vector3(aircraft.x, maxf(aircraft.y, 0.0) + 1.5, 0.5))
-	fx.smoke(Vector3(aircraft.x, 0.4, 1.0), 1.0, Color(0.25, 0.25, 0.25))
+	fx.crash(Vector3(aircraft.x, maxf(aircraft.y, aircraft.gy) + 1.5, 0.5))
+	fx.smoke(Vector3(aircraft.x, aircraft.gy + 0.4, 1.0), 1.0, Color(0.25, 0.25, 0.25))
 	sfx.play(Sfx.CRASH, 1.0, 0.0)
 	if not DebugFlags.off("shake"):
 		_shake = 1.0
@@ -451,12 +615,13 @@ func _closeness() -> float:
 	var d0 := maxf(airfield.aim_x - _start_x, 1.0)
 	var d := airfield.aim_x - aircraft.x
 	var by_dist := clampf((d0 - d) / maxf(d0 - Tuning.zoom_close_distance, 1.0), 0.0, 1.0)
-	var by_alt := clampf((Tuning.zoom_high_altitude - aircraft.y) / maxf(Tuning.zoom_high_altitude - Tuning.zoom_low_altitude, 1.0), 0.0, 1.0)
+	var by_alt := clampf((Tuning.zoom_high_altitude - aircraft.agl()) / maxf(Tuning.zoom_high_altitude - Tuning.zoom_low_altitude, 1.0), 0.0, 1.0)
 	return smoothstep(0.0, 1.0, maxf(by_dist, by_alt))
 
 func _snap_camera() -> void:
 	_update_camera(0.0, true)
 	hud.set_papi(airfield.papi_white, _plane_screen_x(), state == APPROACH and not _graded, true)
+	_update_fog()
 
 ## Where the plane is on screen (viewport pixels): the big PAPI follows it sideways.
 func _plane_screen_x() -> float:
@@ -480,7 +645,8 @@ func _update_camera(dt: float, snap: bool = false) -> void:
 	_tilt = lerpf(Tuning.camera_tilt_deg, Tuning.camera_tilt_wide_deg, wide)
 	var h := _cam_w * _aspect()
 	var ground_y := lerpf(Tuning.ground_screen_y, Tuning.ground_screen_y_wide, wide)
-	_cam_y = lerpf(_cam_y, (0.5 - ground_y) * h / cos(deg_to_rad(_tilt)), k)
+	var slope_lift := 0.6 * airfield.ground_y(aircraft.x) if airfield.slope_m > 0.0 else 0.0
+	_cam_y = lerpf(_cam_y, (0.5 - ground_y) * h / cos(deg_to_rad(_tilt)) + slope_lift, k)
 	aircraft.set_view_scale(_cam_w)
 	_apply_camera()
 
@@ -490,15 +656,16 @@ func _apply_camera() -> void:
 	var dist := 80.0
 	var ox := 0.0
 	var oy := 0.0
-	if _shake > 0.001:
-		ox = rng.randf_range(-1.0, 1.0) * _shake * Tuning.shake_size
-		oy = rng.randf_range(-1.0, 1.0) * _shake * Tuning.shake_size
+	var sh := maxf(_shake, _turb_shake)
+	if sh > 0.001:
+		ox = rng.randf_range(-1.0, 1.0) * sh * Tuning.shake_size
+		oy = rng.randf_range(-1.0, 1.0) * sh * Tuning.shake_size
 	camera.position = Vector3(_cam_x + ox, _cam_y + oy + dist * sin(tilt), dist * cos(tilt))
 	camera.rotation = Vector3(-tilt, 0.0, 0.0)
 
 func _update_hud(dt: float) -> void:
 	var flying := state == APPROACH
-	hud.set_flight(aircraft.y, aircraft.vy, aircraft.s, flying and not hud.overlay_visible)
+	hud.set_flight(aircraft.agl(), aircraft.vy - aircraft.gs * airfield.slope_at(aircraft.x) if not aircraft.on_ground else 0.0, aircraft.s, flying and not hud.overlay_visible)
 	hud.set_papi(airfield.papi_white, _plane_screen_x(), flying and not _graded and not hud.overlay_visible)
 	if state == APPROACH or state == ROLLOUT:
 		hud.set_wind(wind.head())
@@ -523,6 +690,23 @@ func _update_distance() -> void:
 		_dist_key = key
 		hud.set_distance(text)
 
+## Fog / rain haze over the 3D view: the runway (and the trees) appear only inside the visibility distance.
+func _update_fog() -> void:
+	if airfield.vis_end <= 0.0 or state == MENU or state == OVER:
+		fog.set_fog(false, 0.0, 1.0, 1.0, 0.0, 1.0, Color.WHITE, 0.0)
+		return
+	var vs := get_viewport().get_visible_rect().size
+	var col := Color(0.8, 0.85, 0.9)
+	var strength := 0.97
+	var haze := 0.0
+	if airfield.weather == Scenarios.RAIN:
+		col = Color(0.5, 0.56, 0.63)
+		strength = 0.72
+		haze = 0.07
+	if airfield.night:
+		col = col.darkened(0.9)
+	fog.set_fog(true, _plane_screen_x(), vs.x / maxf(_cam_w, 1.0), vs.x, Tuning.fog_start, airfield.vis_end, col, strength, haze)
+
 func _on_tuning_changed(property: String) -> void:
 	if property == "outline_thickness":
 		pass
@@ -542,7 +726,9 @@ func _input(event: InputEvent) -> void:
 		if not DebugFlags.off("haptic"):
 			Input.vibrate_handheld(1)
 	if event is InputEventScreenTouch and event.pressed:
-		if state == MENU and not _warming:
+		if state == CARD and _timer > 0.35:
+			_end_card()
+		elif state == MENU and not _warming:
 			_run_start_ms = Time.get_ticks_msec()
 			_paused_total_ms = 0
 			start_run()

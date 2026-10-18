@@ -18,6 +18,13 @@ var _stall_mark: ColorRect
 var _speed_label: Label
 var _gust: Label
 var _dist: Label
+var _scn_label: Label
+var _card_root: Control
+var _card_title: Label
+var _card_sub: Label
+var _card_blurb: Label
+var _card_t := 0.0
+var _card_on := false
 # the big PAPI in the sky above the plane (four round lights + a caption), animated in update()
 var _papi_row: Control
 var _papi_back: Panel
@@ -76,6 +83,9 @@ func _ready() -> void:
 	_place(_runway, 0.5, 0, -270, 72, 540, 40)
 	_dist = _label(34, HORIZONTAL_ALIGNMENT_CENTER)
 	_place(_dist, 0.5, 0, -270, 110, 540, 42)
+	_scn_label = _label(26, HORIZONTAL_ALIGNMENT_LEFT)
+	_place(_scn_label, 0, 0, 24, 198, 520, 34)
+	_scn_label.modulate = Color(1, 1, 1, 0.8)
 	_gust = _label(36, HORIZONTAL_ALIGNMENT_CENTER)
 	_gust.modulate = Color(1, 0.9, 0.4, 0)
 	_gust.text = "GUST!"
@@ -143,6 +153,37 @@ func _ready() -> void:
 	_papi_row.add_child(_papi_caption)
 	_papi_caption.text = "ON PATH"
 	_papi_shown_n = 2
+	# the scenario title card
+	_card_root = Control.new()
+	_card_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_card_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_card_root.visible = false
+	add_child(_card_root)
+	var card_back := ColorRect.new()
+	card_back.color = Color(0.03, 0.05, 0.09, 0.62)
+	card_back.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	card_back.anchor_right = 1.0
+	card_back.anchor_top = 0.27
+	card_back.anchor_bottom = 0.27
+	card_back.offset_bottom = 520
+	_card_root.add_child(card_back)
+	_card_title = _label(104, HORIZONTAL_ALIGNMENT_CENTER)
+	remove_child(_card_title)
+	_card_root.add_child(_card_title)
+	_place(_card_title, 0, 0.27, 0, 40, 1080, 130)
+	_card_title.anchor_right = 1.0
+	_card_title.offset_right = 0
+	_card_sub = _label(54, HORIZONTAL_ALIGNMENT_CENTER)
+	remove_child(_card_sub)
+	_card_root.add_child(_card_sub)
+	_place(_card_sub, 0, 0.27, 0, 180, 1080, 70)
+	_card_sub.anchor_right = 1.0
+	_card_sub.offset_right = 0
+	_card_blurb = _label(40, HORIZONTAL_ALIGNMENT_CENTER)
+	remove_child(_card_blurb)
+	_card_root.add_child(_card_blurb)
+	_card_blurb.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_place(_card_blurb, 0.5, 0.27, -440, 270, 880, 220)
 	# menu / game-over overlay
 	_overlay = ColorRect.new()
 	_overlay.color = Color(0.05, 0.08, 0.14, 0.62)
@@ -234,8 +275,32 @@ func set_wind(head: float) -> void:
 	else:
 		_wind.text = "WIND  %.0f  tailwind  >>" % a
 
-func flash_gust() -> void:
-	_gust.modulate.a = 1.0
+## A short warning under the wind readout ("GUST!", "WIND SHEAR!", "TRAPPED!").
+func flash_warning(text: String, color: Color = Color(1, 0.9, 0.4)) -> void:
+	_gust.text = text
+	_gust.modulate = Color(color.r, color.g, color.b, 1.0)
+
+## The scenario + weather line under the strikes.
+func set_scenario_text(text: String) -> void:
+	_scn_label.text = text
+
+## The scenario title card: big name, weather line, one-line briefing. It fades in; hide_card() removes it.
+func show_card(title: String, sub: String, blurb: String, color: Color) -> void:
+	_card_title.text = title
+	_card_title.add_theme_color_override("font_color", color)
+	_card_sub.text = sub
+	_card_blurb.text = blurb
+	_card_t = 0.0
+	_card_on = true
+	_card_root.visible = true
+	_card_root.modulate.a = 0.0
+
+func hide_card() -> void:
+	_card_on = false
+	_card_root.visible = false
+
+func card_visible() -> bool:
+	return _card_root.visible
 
 ## Per-frame flight readout: altitude, sink rate (colour = how the touchdown would grade), airspeed fraction.
 func set_flight(alt: float, vy: float, s: float, show: bool) -> void:
@@ -410,6 +475,9 @@ func _update_papi(dt: float) -> void:
 
 func update(delta: float) -> void:
 	_t += delta
+	if _card_on:
+		_card_t += delta
+		_card_root.modulate.a = clampf(_card_t / 0.18, 0.0, 1.0)
 	if _pop_t < _pop_len + 0.1:
 		_pop_t += delta
 		var k := _pop_t / maxf(_pop_len, 0.01)

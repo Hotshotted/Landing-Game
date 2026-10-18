@@ -7,6 +7,11 @@ var base := 0.0
 var gust_v := 0.0          # current vertical push (+ = up), units/s of sink target
 var gust_h := 0.0          # current horizontal push (+ = more headwind)
 var gust_started := false  # true for the one update in which a gust began (Main reads and clears it)
+var turb_v := 0.0          # turbulence on final: continuous vertical noise (weather)
+var shear_v := 0.0         # wind shear: a sudden downdraft ...
+var shear_h := 0.0         # ... and a sudden loss of headwind
+var _tt := 0.0
+var _shear_t := -1.0       # time into a shear (< 0 = none running)
 var _t := 0.0              # time into the current gust
 var _dur := 1.0
 var _peak_v := 0.0
@@ -22,10 +27,49 @@ func reset(base_wind: float, rng: RandomNumberGenerator, first_gust_in: float = 
 	_active = false
 	_t = 0.0
 	_next_in = first_gust_in
+	turb_v = 0.0
+	shear_v = 0.0
+	shear_h = 0.0
+	_shear_t = -1.0
 
-## Total headwind right now (steady + gust).
+## Total headwind right now (steady + gust + shear).
 func head() -> float:
-	return base + gust_h
+	return base + gust_h + shear_h
+
+## Total vertical push (gust + turbulence + shear) and horizontal push (gust + shear).
+func v_total() -> float:
+	return gust_v + turb_v + shear_v
+
+func h_total() -> float:
+	return gust_h + shear_h
+
+## Wind shear: a sudden downdraft and a headwind loss that fade in and out over Tuning.shear_duration.
+func start_shear() -> void:
+	_shear_t = 0.0
+
+func shear_running() -> bool:
+	return _shear_t >= 0.0
+
+## Turbulence: `amp` (units/s) of smooth vertical noise, scaled by `zone` (0..1: how far into the rough air).
+func update_turbulence(dt: float, amp: float, zone: float) -> void:
+	_tt += dt
+	var n := sin(_tt * 2.3) * 0.5 + sin(_tt * 5.1 + 1.0) * 0.35 + sin(_tt * 9.7 + 2.0) * 0.15
+	turb_v = amp * zone * n
+
+func update_shear(dt: float) -> void:
+	if _shear_t < 0.0:
+		return
+	_shear_t += dt
+	var dur := maxf(Tuning.shear_duration, 0.1)
+	if _shear_t >= dur:
+		_shear_t = -1.0
+		shear_v = 0.0
+		shear_h = 0.0
+		return
+	var bell := sin(PI * _shear_t / dur)
+	bell *= bell
+	shear_v = -Tuning.shear_sink * bell
+	shear_h = -Tuning.shear_head_drop * bell
 
 ## `scale` (0..1+) is the round's difficulty scaling of the gust strength.
 func update(dt: float, rng: RandomNumberGenerator, scale: float) -> void:

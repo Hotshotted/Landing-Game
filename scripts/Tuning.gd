@@ -197,6 +197,51 @@ var papi_hud_margin := 24.0
 var papi_hud_fade := 9.0
 var papi_hud_follow := 10.0
 
+# ---------- Scenarios ----------
+## The title card at the start of each approach (seconds; a tap skips it).
+var card_time := 1.7
+## Mountain strip: the runway climbs at this angle (degrees); the ground starts rising 25 units before the threshold.
+var mountain_slope_min := 4.0
+var mountain_slope_max := 7.0
+## Carrier: deck height, speed, the wire zone (half width around the aim point) and the arrested stop.
+var carrier_deck_height := 9.0
+var carrier_speed_min := 7.0
+var carrier_speed_max := 10.0
+var carrier_wire_half := 18.0
+var carrier_arrest_decel := 55.0
+var deck_decel := 8.0
+## Moving truck: bed length, speed, height and braking.
+var truck_len_min := 30.0
+var truck_len_max := 38.0
+var truck_speed_min := 8.0
+var truck_speed_max := 11.0
+var truck_height := 2.4
+var truck_decel := 16.0
+## Seaplane: braking on water, and how much harder a touchdown on rough water (outside the calm lane) counts.
+var water_decel := 2.4
+var water_rough_mult := 1.7
+## Engine out: drag on the airspeed and how much steeper the glide is.
+var engine_out_drag := 0.012
+var engine_out_sink_mult := 1.1
+
+# ---------- Weather ----------
+## Fog: how far the runway can be seen (units), where the fade starts.
+var fog_end_min := 110.0
+var fog_end_max := 160.0
+var fog_start := 20.0
+## Rain: visibility, and how much the wet runway cuts the braking.
+var rain_vis_end := 320.0
+var rain_wet_decel := 0.65
+## Turbulence on final: vertical noise (units/s), building from nothing this far before the threshold to full strength at it.
+var turb_strength := 1.6
+var turb_zone := 90.0
+## Wind shear: the downdraft (units/s), the headwind it takes away, how long it lasts, and the warning (windsock snap)
+## before it hits (seconds).
+var shear_sink := 4.2
+var shear_head_drop := 7.0
+var shear_duration := 1.2
+var shear_tele_time := 1.4
+
 # ---------- Start-up pre-warm ----------
 var prewarm_min_seconds := 1.5
 var prewarm_stable_frames := 10

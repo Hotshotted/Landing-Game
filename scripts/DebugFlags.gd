@@ -10,6 +10,8 @@ extends RefCounted
 ##   ?god                                              obstacles and crash-level sink can't crash the plane (to look around)
 ##   ?round=N                                          start the run at round N (difficulty, terrain)
 ##   ?seed=N                                           fixed random seed (same rounds every run)
+##   ?scenario=short|engineout|night|mountain|carrier|water|truck|standard   force that scenario every approach
+##   ?weather=fog|rain|turbulence|shear|clear          force that weather every approach
 ## Combine with "&", e.g.  ?nofx=smoke&noprewarm&perf
 ## The active flags are printed under the build stamp.
 
@@ -24,6 +26,8 @@ static var tune := false
 static var god := false
 static var start_round := 1
 static var seed_value := -1
+static var scenario_value := -1
+static var weather_value := -1
 
 ## True if the named effect has been switched off.
 static func off(effect: String) -> bool:
@@ -54,6 +58,14 @@ static func seed_number() -> int:
 	_load()
 	return seed_value
 
+static func scenario_forced() -> int:
+	_load()
+	return scenario_value
+
+static func weather_forced() -> int:
+	_load()
+	return weather_value
+
 ## One-line description of the active flags ("" when none), shown next to the build stamp.
 static func summary() -> String:
 	_load()
@@ -76,6 +88,10 @@ static func summary() -> String:
 		parts.append("round=%d" % start_round)
 	if seed_value >= 0:
 		parts.append("seed=%d" % seed_value)
+	if scenario_value >= 0:
+		parts.append("scenario=" + Scenarios.KEYS[scenario_value])
+	if weather_value >= 0:
+		parts.append("weather=" + Scenarios.WX_KEYS[weather_value])
 	for b in _bad:
 		parts.append("?" + b)
 	return " ".join(parts)
@@ -104,6 +120,8 @@ static func parse(args: Array[String]) -> void:
 	god = false
 	start_round = 1
 	seed_value = -1
+	scenario_value = -1
+	weather_value = -1
 	for a in args:
 		var kv := a.split("=", true, 1)
 		var key := kv[0].uri_decode().to_lower()
@@ -130,6 +148,14 @@ static func parse(args: Array[String]) -> void:
 				start_round = maxi(int(val), 1)
 			"seed":
 				seed_value = maxi(int(val), 0)
+			"scenario":
+				scenario_value = Scenarios.scenario_from_key(val)
+				if scenario_value < 0:
+					_bad.append("scenario=" + val)
+			"weather":
+				weather_value = Scenarios.weather_from_key(val)
+				if weather_value < 0:
+					_bad.append("weather=" + val)
 			"v":
 				pass  # cache-busting parameter added by the page, not a flag
 			_:

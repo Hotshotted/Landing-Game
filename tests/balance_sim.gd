@@ -15,6 +15,7 @@ var DF: GDScript
 var SV: GDScript
 var WIND: GDScript
 var AC: GDScript
+var SC: GDScript
 
 func load_classes() -> void:
 	MAIN = load("res://scripts/Main.gd")
@@ -25,6 +26,7 @@ func load_classes() -> void:
 	SV = load("res://scripts/Save.gd")
 	WIND = load("res://scripts/Wind.gd")
 	AC = load("res://scripts/Aircraft.gd")
+	SC = load("res://scripts/Scenarios.gd")
 
 
 func _init() -> void:
@@ -37,14 +39,15 @@ func _init() -> void:
 	await process_frame
 	main.test_mode = true
 	SV.enabled = false
-	report("no flare", -1.0, 0.0)
-	for bias in [0.0, -12.0, -20.0, -28.0]:
-		for fh in [2.5, 4.0, 6.0]:
-			aim_bias = bias
-			report("smart from %.1f aim%+.0f" % [fh, bias], fh, 0.0)
-	aim_bias = -15.0
-	for fh in [1.0, 2.0, 3.0, 4.0, 6.0, 10.0]:
-		report("hold 5.5 from %.1f aim-15" % fh, fh, 5.5)
+	for scn in range(8):
+		SC.forced_scenario = scn
+		SC.forced_weather = 0
+		for fh in [2.5, 4.0]:
+			report("%-10s smart from %.1f" % [SC.KEYS[scn], fh], fh, 0.0)
+	SC.forced_scenario = 0
+	for wx in range(1, 5):
+		SC.forced_weather = wx
+		report("std + %-10s" % SC.WX_KEYS[wx], 3.0, 0.0)
 	quit()
 
 func report(label: String, flare_h: float, flare_theta: float) -> void:
@@ -53,12 +56,12 @@ func report(label: String, flare_h: float, flare_theta: float) -> void:
 	var total := 0
 	var sinks := 0.0
 	var offs := 0.0
-	var n := 48
+	var n := 20
 	for i in n:
 		main.rng.seed = 1000 + i
 		main.start_run()
-		main.round_no = 1 + (i % 12)       # spread over the difficulty ramp
-		main._begin_round()
+		main.round_no = 3 + (i % 10)       # spread over the difficulty ramp
+		main._begin_round(false)
 		var res := fly(flare_h, flare_theta)
 		if res == "crash":
 			crashes += 1
@@ -83,19 +86,21 @@ func fly(flare_h: float, flare_theta: float) -> String:
 	var af = main.airfield
 	main.last_result = {}
 	var t := 0.0
-	while t < 60.0:
+	while t < 70.0:
 		t += 1.0 / 60.0
 		var gs: float = maxf(float(ac.gs), 4.0)
-		var cmd := 0.0
-		if flare_h < 0.0 or ac.y > flare_h:
-			var t_go: float = maxf((af.aim_x + aim_bias - ac.x) / gs, 0.5)
-			var want_vy: float = clampf(-ac.y / t_go, -5.0, -2.5)
-			cmd = (want_vy + float(tn.trim_sink)) / float(tn.pitch_lift_gain)
-		elif flare_theta > 0.0:
-			cmd = flare_theta
+		var m: float = af.slope_at(ac.x)
+		var agl: float = ac.agl()
+		var cmd: float = 0.0
+		var power_trim: float = float(tn.trim_sink) * float(ac.sink_mult)
+		if flare_h < 0.0 or agl > flare_h:
+			var closing: float = maxf(gs - float(af.deck_speed), 4.0)
+			var t_go: float = maxf((af.aim_x + aim_bias - ac.x) / closing, 0.5)
+			var want_rel: float = clampf(-agl / t_go, -5.0, -2.5)
+			cmd = (want_rel + gs * m + power_trim) / float(tn.pitch_lift_gain)
 		else:
-			var want: float = -(0.25 + 0.3 * float(ac.y))
-			cmd = (want + float(tn.trim_sink)) / float(tn.pitch_lift_gain)
+			var want: float = -(0.25 + 0.3 * agl) + gs * m
+			cmd = (want + power_trim) / float(tn.pitch_lift_gain)
 		var dy: float = -(cmd - ac.theta_target) / (float(tn.pitch_per_pixel) * float(tn.sensitivity))
 		ac.touching = true
 		ac.add_drag(dy)

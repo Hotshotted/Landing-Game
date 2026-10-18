@@ -23,6 +23,7 @@ var DF: GDScript
 var SV: GDScript
 var WIND: GDScript
 var AC: GDScript
+var SC: GDScript
 
 func load_classes() -> void:
 	MAIN = load("res://scripts/Main.gd")
@@ -33,6 +34,7 @@ func load_classes() -> void:
 	SV = load("res://scripts/Save.gd")
 	WIND = load("res://scripts/Wind.gd")
 	AC = load("res://scripts/Aircraft.gd")
+	SC = load("res://scripts/Scenarios.gd")
 
 var main: Node3D
 
@@ -104,7 +106,7 @@ func fly(flare_h: float, flare_theta: float) -> Dictionary:
 func new_round(seed_value: int, r: int) -> void:
 	main.rng.seed = seed_value
 	main.round_no = r - 1
-	main._begin_round()
+	main._begin_round(false)
 	main._snap_camera()
 	main.hud.set_fade_now(0.0)
 
@@ -142,7 +144,9 @@ func run_all() -> void:
 	main.test_mode = true
 	var n_start := nodes()
 	tap()
-	check(main.state == MAIN.APPROACH, "a tap on the menu starts the run on the approach")
+	check(main.state == MAIN.CARD and main.hud.card_visible(), "a tap on the menu starts the run with the scenario title card")
+	main.advance(float(tn.card_time) + 0.1)
+	check(main.state == MAIN.APPROACH and not main.hud.card_visible(), "the card goes after card_time and the approach begins")
 	check(not main.hud.overlay_visible, "the overlay is hidden in play")
 	check(main.round_no == 1 and main.strikes == 0 and main.score == 0, "run starts at round 1, no strikes, score 0")
 	check(main.aircraft.x == 0.0 and main.aircraft.y > 25.0, "the plane starts on the left, high")
@@ -396,6 +400,8 @@ func run_all() -> void:
 	var thr_before: float = main.airfield.thr
 	for i in 60 * 16:
 		main.advance(1.0 / 60.0)
+		if main.state == MAIN.CARD:
+			main._end_card()
 		if main.state == MAIN.APPROACH:
 			break
 	check(main.state == MAIN.APPROACH and main.round_no == round_before + 1, "after the rollout a new approach starts straight away (round %d)" % main.round_no)
@@ -413,6 +419,8 @@ func run_all() -> void:
 		if k < 2:
 			for i in 60 * 3:
 				main.advance(1.0 / 60.0)
+				if main.state == MAIN.CARD:
+					main._end_card()
 				if main.state == MAIN.APPROACH:
 					break
 			check(main.state == MAIN.APPROACH, "after strike %d the run goes on with a new approach" % (k + 1))
@@ -430,6 +438,7 @@ func run_all() -> void:
 	var o_before := objects()
 	var r_before := resources()
 	tap()
+	main._end_card()
 	check(main.state == MAIN.APPROACH and main.strikes == 0 and main.score == 0 and main.round_no == 1, "a tap restarts the run IN PLACE (strikes 0, score 0, round 1)")
 	check(main.aircraft.visible and not main.hud.overlay_visible, "...with the plane back and the overlay gone")
 	check(nodes() == n_before_restart and objects() <= o_before + 8 and resources() <= r_before + 8, "restart creates no new nodes (%d -> %d) or resources" % [n_before_restart, nodes()])
@@ -499,6 +508,7 @@ func run_all() -> void:
 		wide_start += main._cam_w
 	check(framed_ok, "every approach starts framed with the plane and the whole runway on screen")
 	check(wide_start / 16.0 > 2.0 * float(tn.view_width_low), "...a much wider view than the close framing (mean start width %.0f vs %.0f)" % [wide_start / 16.0, float(tn.view_width_low)])
+	main.advance(1.0 / 60.0)
 	check(main.airfield._mark > 1.5 and main.aircraft._view_scale > 1.2, "zoomed out, the markers and the plane are drawn larger so they stay visible")
 	# zoom: smooth, never zooms back out, reaches the close framing for the flare
 	new_round(520, 4)
@@ -761,6 +771,408 @@ func run_all() -> void:
 		check(in_panel, "%s is in the ?tune panel" % e)
 	root.size = Vector2i(1152, 648)
 
+	print("== 12. scenarios ==  [nodes %d]" % nodes())
+	root.size = Vector2i(540, 960)
+	await frames(2)
+	force(-1, -1)
+	# --- the endless mix
+	var seen_scn := {}
+	var seen_wx := {}
+	var rng_t := RandomNumberGenerator.new()
+	rng_t.seed = 4242
+	var last := -1
+	var repeats := 0
+	var combos_ok := true
+	var early_ok := true
+	var wx_early := 0
+	var wx_late := 0
+	for rn in range(1, 61):
+		var pick: Vector2i = SC.pick(rn, rng_t, last)
+		if rn <= 2 and (pick.x != 0 or pick.y != 0):
+			early_ok = false
+		if pick.x == last and rn > 2:
+			repeats += 1
+		last = pick.x
+		seen_scn[pick.x] = true
+		seen_wx[pick.y] = true
+		if not SC.combo_ok(pick.x, pick.y):
+			combos_ok = false
+		if rn >= 3 and rn <= 8 and pick.y != 0:
+			wx_early += 1
+		if rn >= 20 and pick.y != 0:
+			wx_late += 1
+	check(seen_scn.size() == 8, "the endless mix reaches every scenario (%d of 8)" % seen_scn.size())
+	check(seen_wx.size() == 5, "...and every weather (%d of 5)" % seen_wx.size())
+	check(early_ok, "rounds 1-2 are a clear standard approach")
+	check(repeats == 0, "the same scenario never comes twice in a row")
+	check(combos_ok, "unfair combinations (night fog, truck in weather, engine-out turbulence ...) are never picked")
+	check(float(wx_late) / 41.0 > float(wx_early) / 6.0, "weather gets more frequent as the run goes on (%.0f %% early, %.0f %% late)" % [100.0 * wx_early / 6.0, 100.0 * wx_late / 41.0])
+	# --- forcing (the ?tune panel and ?scenario= / ?weather=)
+	DF.parse(["scenario=night", "weather=fog"] as Array[String])
+	check(DF.scenario_forced() == 3 and DF.weather_forced() == 1, "?scenario=night&weather=fog parse")
+	DF.parse(["scenario=nonsense"] as Array[String])
+	check(DF.summary().contains("nonsense"), "a typo'd scenario shows in the flag summary")
+	DF.parse([] as Array[String])
+	force(5, 0)
+	var pf: Vector2i = SC.pick(1, rng_t, -1)
+	check(pf == Vector2i(5, 0), "a forced scenario / weather overrides the mix (even in round 1)")
+	force(-1, -1)
+	var dbg_btn_scn = null
+	var dbg_btn_wx = null
+	var tp2 = TP.new()
+	root.add_child(tp2)
+	tp2.build()
+	for b in tp2.find_children("*", "Button", true, false):
+		if b.has_meta("debug") and b.get_meta("debug") == "force_scenario":
+			dbg_btn_scn = b
+		if b.has_meta("debug") and b.get_meta("debug") == "force_weather":
+			dbg_btn_wx = b
+	check(dbg_btn_scn != null and dbg_btn_wx != null, "the ?tune panel has force-scenario and force-weather buttons")
+	dbg_btn_scn.pressed.emit()
+	dbg_btn_wx.pressed.emit()
+	check(SC.forced_scenario == 0 and SC.forced_weather == 0 and dbg_btn_scn.text.contains("STANDARD"), "...that cycle through them (%s, %s)" % [dbg_btn_scn.text, dbg_btn_wx.text])
+	force(-1, -1)
+	tp2.queue_free()
+	await frames(2)
+
+	# --- title card: names the scenario and weather, then the plane flies
+	force(1, 1)
+	main.hud.hide_card()
+	main._begin_round()
+	check(main.state == MAIN.CARD and main.hud._card_title.text == "SHORT FIELD" and main.hud._card_sub.text == "FOG", "the title card names the scenario and the weather (%s / %s)" % [main.hud._card_title.text, main.hud._card_sub.text])
+	var x_before: float = main.aircraft.x
+	main.advance(0.5)
+	check(main.aircraft.x == x_before, "the plane waits while the card is up")
+	main._timer = 0.2
+	main._input(_touch(true))
+	check(main.state == MAIN.CARD, "a tap too early doesn't skip the card")
+	main._timer = 1.0
+	main._input(_touch(true))
+	check(main.state == MAIN.APPROACH, "a tap later skips it")
+	force(-1, -1)
+
+	# --- SHORT FIELD
+	force(1, 0)
+	var short_ok := true
+	for i in 12:
+		new_round(800 + i, 5)
+		if main.airfield.terrain != AF.TREES or main.airfield.rwy_len > 100.0 or main.airfield.tree_count < 3:
+			short_ok = false
+	check(short_ok, "short field: trees before a runway of 100 m or less")
+	new_round(801, 5)
+	main.aircraft.reset(main.airfield.tree_x[0] - 6.0, 2.0)
+	main.advance(0.4)
+	check(main.state == MAIN.CRASH and main.last_crash == "Hit the trees!", "...and the trees are real (%s)" % main.last_crash)
+	var short_land := 0
+	for i in 8:
+		new_round(810 + i, 5)
+		var rs := fly_g(2.5)
+		if not rs["crash"]:
+			short_land += 1
+	check(short_land >= 5, "...but it can be done (%d of 8 landed with a good approach and flare)" % short_land)
+
+	# --- ENGINE OUT
+	force(2, 0)
+	new_round(820, 5)
+	check(main.aircraft.power == 0.0 and main.aircraft.sink_mult > 1.0 and main.airfield.power == 0.0, "engine out: no power, a steeper glide")
+	var a_eo = main.aircraft
+	a_eo.reset(0.0, 60.0)
+	a_eo.s = 0.8
+	for i in 300:
+		a_eo.step_air(0.01, 0.0, 0.0, 0.0)
+	var s_dead: float = a_eo.s
+	a_eo.power = 1.0
+	a_eo.reset(0.0, 60.0)
+	a_eo.s = 0.8
+	for i in 300:
+		a_eo.step_air(0.01, 0.0, 0.0, 0.0)
+	var s_live: float = a_eo.s
+	a_eo.power = 0.0
+	check(s_dead < 0.8 and s_live > 0.9, "...the airspeed doesn't come back without the engine (%.2f vs %.2f with power)" % [s_dead, s_live])
+	var short_x := 0
+	var eo_land := 0
+	for i in 8:
+		new_round(830 + i, 5)
+		var plain_eo := fly_g(-1.0)
+		if plain_eo["crash"]:
+			short_x += 1
+	for i in 8:
+		new_round(830 + i, 5)
+		var smart := fly_g(2.5)
+		if not smart["crash"]:
+			eo_land += 1
+	check(short_x >= 3, "...left alone the glide falls short (%d of 8 crash short)" % short_x)
+	check(eo_land >= 4, "...but a good pilot can make it (%d of 8)" % eo_land)
+
+	# --- NIGHT
+	force(3, 0)
+	new_round(840, 5)
+	main.advance(1.0 / 60.0)
+	var af6 = main.airfield
+	var vis_lights := 0
+	for l in af6._lights:
+		if l.visible:
+			vis_lights += 1
+	check(af6.night and vis_lights > 30, "night: runway, threshold and approach lights are lit (%d lights)" % vis_lights)
+	check(not af6._deco[0].visible and not af6._far_hills[0].visible and not af6._clouds[0].visible, "...and the scenery is gone")
+	check(main._env.background_color.v < 0.2 and main.sun.light_energy < 0.4, "...the sky and the light are dark")
+	check(main.aircraft._nav[0].visible, "...the plane shows its navigation lights")
+	check(af6.terrain == AF.FLAT, "...with no unlit hazards to hit")
+	force(0, 0)
+	new_round(841, 5)
+	main.advance(1.0 / 60.0)
+	var day_lights := 0
+	for l in main.airfield._lights:
+		if l.visible:
+			day_lights += 1
+	check(day_lights == 0 and main._env.background_color.v > 0.5 and main.airfield._deco[0].visible and not main.aircraft._nav[0].visible, "by day the lights are off and the scenery is back")
+
+	# --- MOUNTAIN STRIP
+	force(4, 0)
+	new_round(850, 5)
+	var afm = main.airfield
+	check(afm.slope_m > 0.06 and afm.slope_m < 0.14, "mountain strip: the runway climbs (%.1f deg)" % rad_to_deg(atan(afm.slope_m)))
+	check(afm.ground_y(afm.rwy_end) > afm.ground_y(afm.thr) + 5.0 and afm.ground_y(afm.thr) > 1.0, "...the ground rises along it (%.1f -> %.1f)" % [afm.ground_y(afm.thr), afm.ground_y(afm.rwy_end)])
+	check(main._ramp_visible_for_test(), "...and the ramp and plateau are drawn")
+	main.aircraft.reset(afm.aim_x, afm.ground_y(afm.aim_x) + 0.3)
+	main.aircraft.vy = -2.0
+	main.aircraft.gy = afm.ground_y(afm.aim_x)
+	var gs_m: float = main.aircraft.gs
+	main.advance(0.5)
+	var expect_sink: float = 2.0 + gs_m * afm.slope_m
+	check(main.last_result.has("sink") and absf(float(main.last_result["sink"]) - expect_sink) < 0.9, "...the ground rises to meet the plane: the sink rate counts that (%.1f, ~%.1f expected)" % [float(main.last_result.get("sink", 0.0)), expect_sink])
+	new_round(851, 5)
+	main.aircraft.reset(afm.thr - 40.0, afm.ground_y(afm.thr - 40.0) + 3.0)
+	main.aircraft.vy = -3.0
+	main.advance(1.5)
+	check(main.state == MAIN.CRASH and main.last_crash == "Hit the slope!", "...touching the slope short of the runway is a crash (%s)" % main.last_crash)
+	var m_late := 0.0
+	var m_early := 0.0
+	var mn := 8
+	for i in mn:
+		new_round(860 + i, 5)
+		m_late += sink_of(fly_g(2.5))
+		new_round(860 + i, 5)
+		m_early += sink_of(fly_g(4.5))
+	print("      mountain mean sink: flare from 2.5 -> %.2f | from 4.5 -> %.2f" % [m_late / mn, m_early / mn])
+	check(m_late / mn < m_early / mn, "...uphill the flare has to come later (flaring low: sink %.2f, flaring high: %.2f)" % [m_late / mn, m_early / mn])
+
+	# --- CARRIER
+	force(5, 0)
+	new_round(870, 5)
+	var afc = main.airfield
+	check(afc.deck_h > 5.0 and afc.deck_speed > 5.0 and afc.has_wires, "carrier: a raised deck that moves, with wires")
+	var thr0: float = afc.thr
+	var aim0: float = afc.aim_x
+	afc.step_deck(1.0)
+	check(is_equal_approx(afc.thr - thr0, afc.deck_speed) and is_equal_approx(afc.aim_x - aim0, afc.deck_speed) and is_equal_approx(afc.papi_x - aim0, afc.deck_speed), "...the deck, the aim point and the PAPI move with it (%.1f/s)" % afc.deck_speed)
+	new_round(871, 5)
+	main.aircraft.reset(main.airfield.thr - 1.5, 3.0)
+	main.advance(0.3)
+	check(main.state == MAIN.CRASH and main.last_crash == "Hit the stern!", "...flying into the stern is a crash (%s)" % main.last_crash)
+	new_round(872, 5)
+	main.aircraft.reset(main.airfield.thr - 30.0, 0.4)
+	main.aircraft.vy = -2.0
+	main.advance(0.5)
+	check(main.state == MAIN.CRASH and main.last_crash.begins_with("Splash"), "...short of the deck is the sea (%s)" % main.last_crash)
+	new_round(873, 5)
+	var af7 = main.airfield
+	main.aircraft.reset(af7.aim_x, af7.deck_h + 0.3)
+	main.aircraft.vy = -1.0
+	main.aircraft.s = 1.0
+	main.advance(0.3)
+	var landed_on_deck: bool = main.state == MAIN.ROLLOUT
+	for i in 120:
+		main.advance(1.0 / 60.0)
+		if main.state != MAIN.ROLLOUT:
+			break
+	check(landed_on_deck and main._arrested and main.aircraft.gs <= af7.deck_speed + 3.0, "...touching down in the wire zone traps the plane (relative speed now %.1f)" % (main.aircraft.gs - af7.deck_speed))
+	new_round(874, 5)
+	var af8 = main.airfield
+	main.aircraft.reset(af8.aim_x + float(tn.carrier_wire_half) + 12.0, af8.deck_h + 0.05)
+	main.aircraft.vy = -1.0
+	main.aircraft.s = 1.0
+	main.advance(0.3)
+	check(main.state == MAIN.CRASH and main.last_crash == "Missed the wires!", "...touching down past the wires (a bolter, and there is no going around) is a crash (%s)" % main.last_crash)
+	new_round(875, 5)
+	var af9 = main.airfield
+	main.aircraft.reset(af9.rwy_end - 3.0, af9.deck_h + 0.05)
+	main.aircraft.vy = -1.0
+	main.aircraft.s = 1.0
+	main.aircraft.gs = 22.0
+	main.aircraft.land()
+	main.state = MAIN.ROLLOUT
+	main._arrested = true
+	main.aircraft.gs = 30.0
+	main._arrested = false
+	af9.has_wires = false
+	for i in 120:
+		main.advance(1.0 / 60.0)
+		if main.state != MAIN.ROLLOUT:
+			break
+	check(main.state == MAIN.CRASH and main.last_crash == "Off the end of the deck!", "...rolling off the end of the deck is a crash (%s)" % main.last_crash)
+	var carrier_ok := 0
+	for i in 8:
+		new_round(880 + i, 5)
+		if not fly_g(3.0)["crash"]:
+			carrier_ok += 1
+	check(carrier_ok >= 6, "...and a good pilot lands on it (%d of 8)" % carrier_ok)
+
+	# --- WATER
+	force(6, 0)
+	new_round(890, 5)
+	var afw = main.airfield
+	check(afw.surface == AF.WATER and main.aircraft._floats[0].visible and not main.aircraft._gear[0].visible, "seaplane: floats instead of wheels, on water")
+	check(afw.in_lane(afw.aim_x) and not afw.in_lane(afw.thr - 20.0) and afw.on_runway(afw.thr - 20.0), "...a calm lane, rough water everywhere else (but you may land there)")
+	main.aircraft.reset(afw.aim_x, 0.05)
+	main.aircraft.vy = -1.6
+	main.advance(0.3)
+	var calm_sink: float = float(main.last_result.get("sink", 0.0))
+	var calm_bounced: bool = main.last_result.get("bounced", true)
+	new_round(891, 5)
+	var afw2 = main.airfield
+	main.aircraft.reset(afw2.thr - 25.0, 0.05)
+	main.aircraft.vy = -1.6
+	main.advance(0.3)
+	var rough_sink: float = float(main.last_result.get("sink", 0.0))
+	var rough_bounced: bool = main.last_result.get("bounced", false)
+	check(calm_sink < 2.4 and not calm_bounced, "...the calm lane takes a firm touchdown without a bounce (sink %.1f)" % calm_sink)
+	check(rough_sink > calm_sink * 1.4 and rough_bounced and main.aircraft.vy > 0.5, "...rough water makes the same touchdown harder (%.1f) and bounces it" % rough_sink)
+	var water_ok := 0
+	for i in 6:
+		new_round(895 + i, 5)
+		if not fly_g(3.0)["crash"]:
+			water_ok += 1
+	check(water_ok >= 5, "...a good pilot lands on the lane (%d of 6)" % water_ok)
+
+	# --- MOVING TRUCK
+	force(7, 0)
+	new_round(910, 5)
+	var aft = main.airfield
+	check(aft.surface == AF.TRUCK and aft.deck_h > 1.0 and aft.deck_speed > 5.0 and aft.rwy_len < 40.0, "truck: a short flatbed (%.0f m) driving at %.0f m/s" % [aft.rwy_len, aft.deck_speed])
+	main.aircraft.reset(aft.aim_x, aft.deck_h + 0.3)
+	main.aircraft.vy = -1.0
+	main.aircraft.s = 1.0
+	main.advance(0.3)
+	for i in 240:
+		main.advance(1.0 / 60.0)
+		if main.state != MAIN.ROLLOUT:
+			break
+	check(main.state != MAIN.CRASH and main.aircraft.gs <= aft.deck_speed + 3.0, "...land on the bed and brake to its speed (rel. speed %.1f)" % (main.aircraft.gs - aft.deck_speed))
+	new_round(911, 5)
+	main.aircraft.reset(main.airfield.thr - 20.0, 0.4)
+	main.aircraft.vy = -2.0
+	main.advance(0.4)
+	check(main.state == MAIN.CRASH and main.last_crash == "Missed the truck!", "...missing the truck lands on the road (%s)" % main.last_crash)
+	new_round(912, 5)
+	main.aircraft.reset(main.airfield.thr - 1.0, 2.0)
+	main.advance(0.3)
+	check(main.state == MAIN.CRASH and main.last_crash == "Hit the tailgate!", "...the tailgate is a hazard (%s)" % main.last_crash)
+	var truck_ok := 0
+	for i in 10:
+		new_round(920 + i, 5)
+		if not fly_g(2.0)["crash"]:
+			truck_ok += 1
+	check(truck_ok >= 4, "...and it is possible (%d of 10)" % truck_ok)
+
+	print("== 13. weather ==  [nodes %d]" % nodes())
+	# --- FOG
+	force(0, 1)
+	new_round(930, 5)
+	main.advance(1.0 / 60.0)
+	check(main.airfield.vis_end > 60.0 and main.fog.is_on(), "fog: the haze overlay is on (visibility %.0f)" % main.airfield.vis_end)
+	check(is_equal_approx(float(main.fog._mat.get_shader_parameter("vis_end")), main.airfield.vis_end), "...with the round's visibility distance")
+	check(main.airfield.vis_end < main.airfield.rwy_end - main.aircraft.x, "...so the runway appears only late in the approach")
+	force(0, 0)
+	new_round(931, 5)
+	main.advance(1.0 / 60.0)
+	check(not main.fog.is_on(), "no fog in clear weather")
+	# --- RAIN
+	force(0, 2)
+	new_round(932, 5)
+	main.advance(1.0 / 60.0)
+	var raining := 0
+	for rs in main.airfield._rain:
+		if rs.visible:
+			raining += 1
+	check(raining > 30 and main.fog.is_on() and main.airfield.wet, "rain: streaks fall (%d), the view is hazy, the runway is wet" % raining)
+	var wet_decel: float = main.airfield.surface_decel()
+	force(0, 0)
+	new_round(932, 5)
+	check(wet_decel < main.airfield.surface_decel() * 0.8, "...a wet runway brakes worse (%.1f vs %.1f)" % [wet_decel, main.airfield.surface_decel()])
+	# --- TURBULENCE
+	force(0, 3)
+	new_round(933, 5)
+	var tw = main.wind
+	var far_max := 0.0
+	for i in 60:
+		main.advance(1.0 / 60.0)
+		far_max = maxf(far_max, absf(tw.turb_v))
+	var near_max := 0.0
+	main.aircraft.reset(main.airfield.thr - 8.0, 25.0)
+	for i in 300:
+		main.aircraft.x = main.airfield.thr - 8.0
+		main.aircraft.y = 25.0
+		main.advance(1.0 / 60.0)
+		near_max = maxf(near_max, absf(tw.turb_v))
+	check(near_max > 0.6 and near_max > far_max * 2.0, "turbulence: rough air builds on final (%.2f near the runway, %.2f far out)" % [near_max, far_max])
+	check(main._turb_shake > 0.0, "...and the camera shakes a little")
+	force(0, 0)
+	new_round(934, 5)
+	for i in 120:
+		main.aircraft.y = 25.0
+		main.advance(1.0 / 60.0)
+	check(absf(main.wind.turb_v) < 0.001, "no turbulence in clear weather")
+	# --- WIND SHEAR
+	force(0, 4)
+	new_round(935, 5)
+	var afs = main.airfield
+	check(afs.shear_back > 30.0, "wind shear: it will hit %.0f m before the markers" % afs.shear_back)
+	var t_warn := -1.0
+	var t_hit := -1.0
+	var min_v := 0.0
+	var snapped := false
+	var simt := 0.0
+	main.aircraft.reset(0.0, 30.0)
+	for i in 60 * 40:
+		main.aircraft.y = maxf(main.aircraft.y, 12.0)
+		simt += 1.0 / 60.0
+		set_nose(0.0)
+		main.advance(1.0 / 60.0)
+		if main._shear_state >= 1 and t_warn < 0.0:
+			t_warn = simt
+			snapped = afs._sock_snap > 0.0
+		if main._shear_state >= 2 and t_hit < 0.0:
+			t_hit = simt
+		min_v = minf(min_v, main.wind.shear_v)
+		if main.state != MAIN.APPROACH:
+			break
+	check(t_warn > 0.0 and snapped, "...the windsock snaps round as the warning")
+	check(t_hit > t_warn + float(tn.shear_tele_time) * 0.5, "...a moment later the sink hits (%.1f s after the warning)" % (t_hit - t_warn))
+	check(min_v < -float(tn.shear_sink) * 0.8, "...a real downdraft (%.1f)" % min_v)
+	force(0, 0)
+	new_round(936, 5)
+	for i in 60 * 3:
+		main.advance(1.0 / 60.0)
+	check(main._shear_state == 0 and main.wind.shear_v == 0.0, "no shear in clear weather")
+
+	print("== 14. scenarios allocate nothing ==  [nodes %d]" % nodes())
+	force(-1, -1)
+	var n_pre := nodes()
+	var r_pre := resources()
+	for scn in 8:
+		for wx in 5:
+			if not SC.combo_ok(scn, wx):
+				continue
+			force(scn, wx)
+			new_round(950 + scn * 5 + wx, 6)
+			for i in 20:
+				main.advance(1.0 / 30.0)
+	check(nodes() == n_pre, "every scenario x weather combination in turn: no new nodes (%d -> %d)" % [n_pre, nodes()])
+	check(resources() <= r_pre + 4, "...and no new resources (%d -> %d)" % [r_pre, resources()])
+	force(-1, -1)
+	root.size = Vector2i(1152, 648)
+
 	print("== 9. debug flags / frame time ==  [nodes %d]" % nodes())
 	DF.parse(["nofx=smoke,shake", "perf", "round=4", "seed=9", "bogus"] as Array[String])
 	check(DF.off("smoke") and DF.off("shake") and not DF.off("popup"), "?nofx=smoke,shake switches just those off")
@@ -774,6 +1186,47 @@ func run_all() -> void:
 	check(main._frame_delta(1.0) == 0.0, "a stall (1 s frame) is dropped, not simulated")
 	check(main._frame_delta(0.016) == 0.0 and main._frame_delta(0.016) == 0.0, "...and a couple of frames are skipped after it")
 	check(main._frame_delta(0.016) > 0.0, "...then play resumes")
+
+func force(scn: int, wx: int) -> void:
+	SC.forced_scenario = scn
+	SC.forced_weather = wx
+
+func _touch(pressed: bool) -> InputEventScreenTouch:
+	var e := InputEventScreenTouch.new()
+	e.position = Vector2(540, 900)
+	e.pressed = pressed
+	return e
+
+## Fly the current approach with an autopilot that knows about slopes, moving decks and engine-out: steer to the aim
+## point (closing speed = ground speed - deck speed), then flare at `flare_h` above the ground with a sink rate that
+## eases down with the height (relative to the ground). flare_h < 0 = never flare.
+func fly_g(flare_h: float) -> Dictionary:
+	var ac = main.aircraft
+	var af = main.airfield
+	main.last_result = {}
+	var t := 0.0
+	while t < 70.0:
+		t += 1.0 / 60.0
+		var gs: float = maxf(float(ac.gs), 4.0)
+		var m: float = af.slope_at(ac.x)
+		var agl: float = ac.agl()
+		var trim: float = float(tn.trim_sink) * float(ac.sink_mult)
+		var cmd := 0.0
+		if flare_h < 0.0 or agl > flare_h:
+			var closing: float = maxf(gs - float(af.deck_speed), 4.0)
+			var t_go: float = maxf((float(af.aim_x) - float(ac.x)) / closing, 0.5)
+			var want_rel: float = clampf(-agl / t_go, -5.0, -2.5)
+			cmd = (want_rel + gs * m + trim) / float(tn.pitch_lift_gain)
+		else:
+			var want: float = -(0.25 + 0.3 * agl) + gs * m
+			cmd = (want + trim) / float(tn.pitch_lift_gain)
+		set_nose(cmd)
+		main.advance(1.0 / 60.0)
+		if main.state == MAIN.CRASH:
+			return {"crash": true, "result": {}}
+		if main.state == MAIN.ROLLOUT or main.state == MAIN.FADE:
+			return {"crash": false, "result": main.last_result}
+	return {"crash": true, "result": {}, "timeout": true}
 
 func steady_vy(deg: float, seconds: float = 2.5) -> float:
 	var a = main.aircraft
@@ -790,8 +1243,10 @@ func sink_of(r: Dictionary) -> float:
 func tap_to_start() -> void:
 	main.state = MAIN.MENU
 	tap()
+	main._end_card()
 
 func tap_to_start_force() -> void:
 	main.state = MAIN.MENU
 	main.hud.show_menu(0)
 	tap()
+	main._end_card()
