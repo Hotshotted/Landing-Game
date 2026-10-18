@@ -2321,7 +2321,14 @@ func run_all() -> void:
 	check(SV.data["pink_slips"].size() == 1 and SV.data["pink_slips"][0]["type"] == failed_type and SV.data["pink_slips"][0]["rank"] == 3 and SV.data["pink_slips"][0]["day"] > 19000, "a pink slip is stamped for good: the rank and the failed landing type (%s)" % str(SV.data["pink_slips"]))
 	check(CAR.count(SV.data, failed_type) == CAR.needed() / 2 and not CAR.endorsed(SV.data, 3), "the failed type drops back to half and the endorsement is lost")
 	check(main.hud._ov_title.text == "PINK SLIP" and main.hud._ov_body.text.contains(SC.NAMES[failed_type].capitalize()) and main.hud._ov_body.text.contains("fee"), "the debrief says so (%s)" % main.hud._ov_body.text.replace("\n", " | ").left(90))
-	check(not main.hud._menu_buttons["ad"].visible, "(no ad offers yet)")
+	check(main.hud._menu_buttons["ad"].visible and main.hud._menu_buttons["ad"].text.contains("HALVE") and not main.hud._menu_buttons["ad"].text.contains("RETRY"), "after a fail the rewarded ad offers to HALVE the examiner fee (and there is no retry-landing ad): %s" % main.hud._menu_buttons["ad"].text)
+	var coins_fail: int = SV.data["coins"]
+	main._on_menu_action("ad")
+	check(main.state == MAIN.AD and main.hud.ad_visible(), "...the fake ad plays")
+	main.advance(float(tn.ad_fake_seconds) + 0.1)
+	check(main.state == MAIN.OVER and SV.data["fee_halved"] and not main.hud._menu_buttons["ad"].visible and main.hud._ov_title.text == "PINK SLIP", "...then the next fee is halved, the offer is gone and the debrief is back")
+	check(SV.data["coins"] == coins_fail, "(the ad costs nothing and pays nothing)")
+	SV.data["fee_halved"] = false
 	main._death_time = Time.get_ticks_msec() / 1000.0 - 1.0
 	main._input(_touch_at(true, Vector2(540, 900)))
 	check(main.state == MAIN.MENU and main.hud.career_visible() and main.hud._cr_book.disabled, "a tap goes to the career screen, where booking is off until you practise the type again")
@@ -2386,6 +2393,41 @@ func run_all() -> void:
 	main._end_card()
 	check(nodes() == n21 and resources() <= r21 + 3, "booking, flying and the certificate / pink slip allocate nothing (%d -> %d nodes)" % [n21, nodes()])
 	SV.data["unlock_all"] = true
+	force(-1, -1)
+
+	print("== 22. ad hooks after the career update ==  [nodes %d]" % nodes())
+	# the halved fee, end to end: fail, watch the ad, retest costs half
+	fresh_endorsed.call(2, 1000)
+	main.book_checkride()
+	fly_ride_landing.call(1.5, 0.0)
+	check(main.state == MAIN.OVER and main.hud._menu_buttons["ad"].visible, "(a failed checkride)")
+	main._on_menu_action("ad")
+	main.advance(float(tn.ad_fake_seconds) + 0.1)
+	CAR.add_practice(SV.data, SV.data["pink_slips"][0]["type"])
+	CAR.add_practice(SV.data, SV.data["pink_slips"][0]["type"])
+	var coins_b4: int = SV.data["coins"]
+	main._continue_from_over()
+	check(main.hud.career_visible() and main.hud._cr_book.text.contains(str(CAR.fee(3, true))), "the career screen offers the retest at the halved fee (%s)" % main.hud._cr_book.text)
+	main.book_checkride()
+	check(coins_b4 - SV.data["coins"] == CAR.fee(3, true) and not SV.data["fee_halved"], "the retest is charged half (%d) and the discount is used up" % (coins_b4 - SV.data["coins"]))
+	# no interstitials in checkrides, practice or the daily
+	ADS.enabled = true
+	var gap22: float = tn.ad_min_gap_seconds
+	var every22: int = tn.ad_interstitial_every
+	tn.ad_min_gap_seconds = 0.0
+	tn.ad_interstitial_every = 1
+	ADS.rounds_since = 99
+	var ad_seen22 := false
+	for k in main.ride_draw.size():
+		if main.state != MAIN.CARD:
+			break
+		fly_ride_landing.call(0.3, 0.0)
+		if main.state == MAIN.AD:
+			ad_seen22 = true
+	check(not ad_seen22, "no interstitial between checkride landings")
+	tn.ad_min_gap_seconds = gap22
+	tn.ad_interstitial_every = every22
+	ADS.enabled = false
 	force(-1, -1)
 
 	print("== 9. debug flags / frame time ==  [nodes %d]" % nodes())

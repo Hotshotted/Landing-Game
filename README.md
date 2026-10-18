@@ -70,8 +70,8 @@ old best-score file; unreadable saves start fresh). `?tune` has Unlock all, Next
   Whiskers the cat (goggles, cap, scarf, crown). Purely visual.
 - **Daily Approach**: one hard approach per calendar day, the same for everyone (seeded by the date; weather is never clear,
   difficulty round `daily_round`). One landing; the best score of the day is saved locally (retries allowed, same approach).
-- **Ad hooks** are stubs (`Ads.gd`) with a fake "Ad playing" screen of `ad_fake_seconds`: rewarded *Retry this checkride landing*
-  (once per attempt) and *Double coins*; an interstitial only on the fade between free-flight rounds, every `ad_interstitial_every`
+- **Ad hooks** are stubs (`Ads.gd`) with a fake "Ad playing" screen of `ad_fake_seconds`: rewarded *Halve your examiner fee* (offered
+  after a failed checkride; the retest costs half, once) and *Double coins*; an interstitial only on the fade between free-flight rounds, every `ad_interstitial_every`
   landed rounds and at least `ad_min_gap_seconds` apart - never mid-approach, in a checkride or in the daily. `?noads` switches
   them off. A real ad SDK replaces the fake screen later.
 - `?tune`: Unlock all, Next aircraft, Checkride, Reset save, +500 coins (plus the earlier force scenario / weather buttons and

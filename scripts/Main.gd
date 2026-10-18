@@ -43,7 +43,7 @@ var _coins_award := 0           # coins the latest landing gave (taken back if i
 var _coins_doubled := false
 var _daily_day := 0
 var _ad_t := 0.0                # fake ad: seconds left
-var _ad_kind := ""              # "double" or "interstitial"
+var _ad_kind := ""              # "double", "fee" or "interstitial"
 var _standard: Dictionary = {}  # the standard this approach is judged on (Standards.for_type)
 var last_verdict: Dictionary = {}    # the verdict on the latest landing: {pass, fails}
 var _gate_dev_kt := INF         # airspeed at the 50 ft gate minus Vref (INF = not measured yet)
@@ -1500,7 +1500,7 @@ func _play_ad(kind: String) -> void:
 	_ad_kind = kind
 	_ad_t = Tuning.ad_fake_seconds
 	state = AD
-	hud.show_ad({"double": "Rewarded: double your coins", "interstitial": "Interstitial"}[kind] + "\n(stub - no real ad)", _ad_t)
+	hud.show_ad({"double": "Rewarded: double your coins", "fee": "Rewarded: halve your examiner fee", "interstitial": "Interstitial"}[kind] + "\n(stub - no real ad)", _ad_t)
 
 func _finish_ad() -> void:
 	hud.hide_ad()
@@ -1515,6 +1515,13 @@ func _finish_ad() -> void:
 			_death_time = Time.get_ticks_msec() / 1000.0
 			hud.show_over(score, best, landings, false, best_streak)
 			_refresh_ad_button()
+		"fee":
+			Save.data["fee_halved"] = true
+			Save.store()
+			hud.flash_warning("Next examiner fee: %d coins" % Career.fee(career_target(), true), Color(1.0, 0.85, 0.3))
+			state = OVER
+			_death_time = Time.get_ticks_msec() / 1000.0
+			_redraw_over()
 		_:
 			_begin_round()
 			_snap_camera()
@@ -1526,6 +1533,8 @@ func _refresh_ad_button() -> void:
 		return
 	if _over_kind == "run" and run_coins > 0 and not _coins_doubled and DebugFlags.ads_enabled():
 		hud.set_ad_button("WATCH AD: DOUBLE COINS (+%d)" % run_coins, true)
+	elif _over_kind == "ride_fail" and not bool(Save.data["fee_halved"]) and DebugFlags.ads_enabled():
+		hud.set_ad_button("WATCH AD: HALVE YOUR EXAMINER FEE", true)
 	else:
 		hud.set_ad_button("", false)
 
@@ -1534,4 +1543,6 @@ func _start_rewarded() -> void:
 		return
 	if _over_kind == "run" and run_coins > 0 and not _coins_doubled:
 		_play_ad("double")
+	elif _over_kind == "ride_fail" and not bool(Save.data["fee_halved"]):
+		_play_ad("fee")
 
