@@ -732,7 +732,7 @@ func _build_logbook() -> void:
 		_log_root.add_child(pn)
 		var col := i % STAMP_COLS
 		var row := i / STAMP_COLS
-		_place(pn, 0, 0.0, 30 + col * 342, 640 + row * 60, 330, 52)
+		_place(pn, 0, 0.0, 30 + col * 342, 700 + row * 60, 330, 52)
 		var lb := _label(24, HORIZONTAL_ALIGNMENT_CENTER)
 		remove_child(lb)
 		pn.add_child(lb)
@@ -747,7 +747,7 @@ func _build_logbook() -> void:
 	_log_root.add_child(_log_back)
 	_place(_log_back, 0.5, 0.0, -170, 1790, 340, 100)
 	for i in MAX_SLIPS:     # pink slips: failed checkrides, kept for good
-		var sp := _box(_log_root, 30, 640 + float(rows) * 60.0 + 16.0 + float(i) * 66.0, 1020, 58, Color(1.0, 0.72, 0.8, 0.95), 8, Color(0.8, 0.3, 0.45), 3)
+		var sp := _box(_log_root, 30, 700 + float(rows) * 60.0 + 16.0 + float(i) * 66.0, 1020, 58, Color(1.0, 0.72, 0.8, 0.95), 8, Color(0.8, 0.3, 0.45), 3)
 		var sl := _label(28, HORIZONTAL_ALIGNMENT_LEFT)
 		remove_child(sl)
 		sp.add_child(sl)
@@ -762,7 +762,7 @@ func _build_logbook() -> void:
 	_log_more = _label(26, HORIZONTAL_ALIGNMENT_RIGHT)
 	remove_child(_log_more)
 	_log_root.add_child(_log_more)
-	_place(_log_more, 0, 0, 530, 640 + float(rows) * 60.0 - 14.0, 520, 36)
+	_place(_log_more, 0, 0, 530, 700 + float(rows) * 60.0 - 14.0, 520, 36)
 
 func _sel_button(text: String, dir: int) -> Button:
 	var b := Button.new()
@@ -791,7 +791,7 @@ func set_plane_choice(id: int) -> void:
 ## Is this screen position on the aircraft selector (so a tap there doesn't start the run)?
 func over_selector(pos: Vector2) -> bool:
 	var vs := get_viewport().get_visible_rect().size
-	if _log_on or _hangar_on or _ad_on or _cr_on or _cert_on:
+	if _log_on or _hangar_on or _ad_on or _cr_on:
 		return true
 	if not _sel_row.visible:
 		return false

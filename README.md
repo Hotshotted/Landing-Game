@@ -113,3 +113,12 @@ and a PRACTICE button. A practice landing is one approach in a suitable aircraft
 standard; meeting every standard fills a pip, while a miss or a crash doesn't count and says why. Meters earned at the same standard
 tier carry over to the next rank, a new tier starts them again. When every meter is full the instructor (Captain Wiggins, a small
 flat portrait) signs an endorsement - the checkride can then be booked. `?tune`: Promote rank, Fill meters, +500 coins.
+
+## Checkrides and consequences (career update, part 4)
+
+With the instructor's endorsement and the examiner's fee in coins (`exam_fee_base` x `exam_fee_growth` ^ (rank - 1), so it grows with the
+rank) you can book the checkride from the career screen. It draws `ride_landings` (3) landing types at random from the rank's list and
+reveals them one at a time on the title card, each flown to the rank's standard. Miss any standard (or crash) and it is over: the
+fee is gone, a **pink slip** (date, rank, failed landing type) is stamped in the logbook for good, and the failed type's meter drops back
+to half - so you practise it again to be re-endorsed before a **retest**: a full checkride with a new random draw at the full fee.
+Pass and a certificate for the new rank is shown. `?screen=certificate|slip|career|logbook|hangar` opens a screen at start.

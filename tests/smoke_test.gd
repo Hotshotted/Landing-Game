@@ -2247,6 +2247,147 @@ func run_all() -> void:
 	SV.data["unlock_all"] = true
 	force(-1, -1)
 
+	print("== 21. checkrides, pink slips, certificates ==  [nodes %d]" % nodes())
+	var fly_ride_landing := func(sink: float, offset: float) -> void:
+		main._end_card()
+		land_at(sink, offset)
+		main.aircraft.touching = true
+		for i in 900:
+			main.aircraft.theta_target = 5.0
+			main.advance(1.0 / 30.0)
+			if main.state == MAIN.CARD or main.state == MAIN.OVER:
+				break
+	var fresh_endorsed := func(rank: int, coins: int) -> void:
+		SV.data = SV.default_data()
+		SV.data["rank"] = rank
+		SV.data["coins"] = coins
+		CAR.on_rank_change(SV.data, rank)
+		force(-1, -1)
+		main.start_run()
+		main._end_card()
+		main.state = MAIN.MENU
+		main._show_menu()
+		main.debug_endorse()
+	# --- booking: needs the endorsement and the money
+	fresh_endorsed.call(2, 500)
+	SV.data["proficiency"]["counts"].clear()
+	main.state = MAIN.MENU
+	main._on_menu_action("career")
+	check(main.hud._cr_book.disabled and not main.book_checkride(), "without the endorsement the checkride can't be booked")
+	main.debug_endorse()
+	SV.data["coins"] = 5
+	main._on_menu_action("career")
+	var fee3: int = CAR.fee(3)
+	check(main.hud._cr_book.disabled and main.hud._cr_book.text.contains(str(fee3)) and not main.book_checkride() and main.mode != MAIN.RIDE, "endorsed but without the fee (%d coins): still can't" % fee3)
+	SV.data["coins"] = 500
+	main._on_menu_action("career")
+	check(not main.hud._cr_book.disabled and main.hud._cr_book.text.contains("BOOK CHECKRIDE") and main.hud._cr_status.text.contains(str(fee3)), "endorsed and funded: the button shows the examiner's fee (%s)" % main.hud._cr_book.text)
+	main._on_menu_action("book")
+	check(main.mode == MAIN.RIDE and main.state == MAIN.CARD and SV.data["coins"] == 500 - fee3 and main.ride_target == 3, "booking pays the fee (%d coins) and starts the checkride" % fee3)
+	check(main.ride_draw.size() == int(tn.ride_landings), "it draws %d landings" % main.ride_draw.size())
+	var drawn_types: Array[int] = []
+	for e in main.ride_draw:
+		drawn_types.append(e["scn"])
+		check(CAR.types_for(3).has(e["scn"]) and PL.offers(e["plane"], e["scn"]) and CAR.planes(3).has(e["plane"]), "(landing %s: a Private type in a suitable aircraft)" % SC.NAMES[e["scn"]])
+	var uniq_d := {}
+	for t in drawn_types:
+		uniq_d[t] = true
+	check(uniq_d.size() == drawn_types.size(), "...of distinct types")
+	check(main.hud._card_title.text == SC.NAMES[drawn_types[0]] and main.hud._card_sub.text.contains("1 / 3") and main.hud._card_blurb.text.contains("beyond") or main.hud._card_blurb.text.contains("Land"), "the first landing is revealed on its card (%s, %s)" % [main.hud._card_title.text, main.hud._card_sub.text])
+	check(not main.hud._card_title.text == SC.NAMES[drawn_types[1]] or drawn_types[1] == drawn_types[0], "...the others are not")
+	check(main.hud._round.text.begins_with("CHECKRIDE") and main.strikes_max() == 1 and main._standard["zone_ft"] != 600.0, "it is flown to the Private standard, one crash and it's over")
+	var seeds_a: Array = main.ride_draw.map(func(e): return e["seed"])
+	# --- fly it to standard: certificate
+	for k in main.ride_draw.size():
+		check(main.ride_idx == k and main.scenario == drawn_types[k], "checkride landing %d: %s is revealed" % [k + 1, SC.NAMES[drawn_types[k]]])
+		fly_ride_landing.call(0.3, 0.0)
+		check(main.ride_fails.is_empty(), "(landing %d to standard: %s)" % [k + 1, str(main.ride_fails)])
+	check(main.state == MAIN.OVER and main.ride_passed and SV.data["rank"] == 3, "every landing to standard: the checkride is passed and the rank is Private")
+	check(main.hud.certificate_visible() and main.hud._cert_rank.text == "PRIVATE" and main.hud._cert_body.text.contains("Landings") and main.hud._cert_date.text.contains("/"), "a certificate for the new rank (%s)" % main.hud._cert_body.text.replace("\n", " | ").left(80))
+	check(SV.data["checkrides"]["3"]["passes"] == 1 and SV.data["pink_slips"].is_empty() and main.plane_id == PL.CUB, "the pass is recorded, no pink slip, your own aircraft is back")
+	main._death_time = Time.get_ticks_msec() / 1000.0 - 1.0
+	main._input(_touch_at(true, Vector2(540, 900)))
+	check(main.state == MAIN.MENU and not main.hud.certificate_visible(), "a tap on the certificate goes back to the menu")
+	check(SV.data["coins"] == 500 - fee3, "(the fee is not refunded)")
+	# --- a failed landing: pink slip, the fee is gone, the meter drops
+	fresh_endorsed.call(2, 500)
+	var fee_before := 500
+	main.book_checkride()
+	var failed_type: int = main.ride_draw[0]["scn"]
+	fly_ride_landing.call(1.5, 0.0)          # 7.5 ft/s: over the sink limit
+	check(main.state == MAIN.OVER and not main.ride_passed and SV.data["rank"] == 2, "missing a standard fails the checkride and the rank stays")
+	check(main.ride_idx == 0 and main.ride_draw.size() > 1, "it ends at the failed landing (the others are never flown)")
+	check(SV.data["coins"] == fee_before - fee3, "the examiner keeps the fee (%d coins left)" % SV.data["coins"])
+	check(SV.data["pink_slips"].size() == 1 and SV.data["pink_slips"][0]["type"] == failed_type and SV.data["pink_slips"][0]["rank"] == 3 and SV.data["pink_slips"][0]["day"] > 19000, "a pink slip is stamped for good: the rank and the failed landing type (%s)" % str(SV.data["pink_slips"]))
+	check(CAR.count(SV.data, failed_type) == CAR.needed() / 2 and not CAR.endorsed(SV.data, 3), "the failed type drops back to half and the endorsement is lost")
+	check(main.hud._ov_title.text == "PINK SLIP" and main.hud._ov_body.text.contains(SC.NAMES[failed_type].capitalize()) and main.hud._ov_body.text.contains("fee"), "the debrief says so (%s)" % main.hud._ov_body.text.replace("\n", " | ").left(90))
+	check(not main.hud._menu_buttons["ad"].visible, "(no ad offers yet)")
+	main._death_time = Time.get_ticks_msec() / 1000.0 - 1.0
+	main._input(_touch_at(true, Vector2(540, 900)))
+	check(main.state == MAIN.MENU and main.hud.career_visible() and main.hud._cr_book.disabled, "a tap goes to the career screen, where booking is off until you practise the type again")
+	main._on_menu_action("back")
+	main._on_menu_action("logbook")
+	check(main.hud._log_slips[0].visible and main.hud._log_slip_labels[0].text.contains("PINK SLIP") and main.hud._log_slip_labels[0].text.contains(SC.NAMES[failed_type].capitalize()) and main.hud._log_slip_labels[0].text.contains("PRIVATE"), "the logbook shows it (%s)" % main.hud._log_slip_labels[0].text)
+	main._on_menu_action("back")
+	# --- the retest: practise the type back to full, a new draw, the full fee
+	for k in 2:
+		CAR.add_practice(SV.data, failed_type)
+	check(CAR.endorsed(SV.data, 3), "practising the failed type back to full brings the endorsement back")
+	main.state = MAIN.MENU
+	var coins_pre: int = SV.data["coins"]
+	check(main.book_checkride() and SV.data["coins"] == coins_pre - fee3, "the retest costs the full fee again (%d)" % fee3)
+	var seeds_b: Array = main.ride_draw.map(func(e): return e["seed"])
+	check(seeds_a != seeds_b, "...and is a new draw (%s vs %s)" % [str(seeds_a), str(seeds_b)])
+	# --- a crash fails it too
+	main.state = MAIN.OVER
+	main.mode = MAIN.RIDE
+	main._end_card() if main.state == MAIN.CARD else null
+	fresh_endorsed.call(2, 500)
+	main.book_checkride()
+	var crash_type: int = main.ride_draw[0]["scn"]
+	main._end_card()
+	main._crash("test")
+	for i in 600:
+		main.advance(1.0 / 30.0)
+		if main.state == MAIN.OVER:
+			break
+	check(main.state == MAIN.OVER and not main.ride_passed and SV.data["pink_slips"].size() == 1 and SV.data["pink_slips"][0]["type"] == crash_type, "a crash fails the checkride and earns a pink slip")
+	# --- the halved fee flag (the rewarded ad sets it)
+	fresh_endorsed.call(2, 500)
+	SV.data["fee_halved"] = true
+	main._on_menu_action("career")
+	check(main.hud._cr_book.text.contains(str(CAR.fee(3, true))) and main.hud._cr_status.text.contains("halved"), "a halved fee shows on the career screen (%s)" % main.hud._cr_book.text)
+	main.book_checkride()
+	check(SV.data["coins"] == 500 - CAR.fee(3, true) and not SV.data["fee_halved"], "...is what is charged, and is used up")
+	# --- Sport has only two types: the checkride is two landings; the top rank has no checkride
+	fresh_endorsed.call(0, 500)
+	main.book_checkride()
+	check(main.ride_draw.size() == 2 and main.ride_target == 1, "Sport's checkride has only the 2 types it covers")
+	fresh_endorsed.call(7, 500)
+	check(not main.book_checkride(), "Airline Captain has no checkride to book")
+	# --- nothing is allocated by it
+	fresh_endorsed.call(2, 5000)
+	var n21 := nodes()
+	var r21 := resources()
+	for i in 2:
+		main.state = MAIN.MENU
+		main.debug_endorse()
+		main.book_checkride()
+		for k in main.ride_draw.size():
+			if main.state != MAIN.CARD:
+				break
+			fly_ride_landing.call(0.3, 0.0)
+		main._death_time = Time.get_ticks_msec() / 1000.0 - 1.0
+		if main.state == MAIN.OVER:
+			main._continue_from_over()
+		SV.data["rank"] = 2
+		CAR.on_rank_change(SV.data, 2)
+	main.start_run()
+	main._end_card()
+	check(nodes() == n21 and resources() <= r21 + 3, "booking, flying and the certificate / pink slip allocate nothing (%d -> %d nodes)" % [n21, nodes()])
+	SV.data["unlock_all"] = true
+	force(-1, -1)
+
 	print("== 9. debug flags / frame time ==  [nodes %d]" % nodes())
 	DF.parse(["nofx=smoke,shake", "perf", "round=4", "seed=9", "bogus"] as Array[String])
 	check(DF.off("smoke") and DF.off("shake") and not DF.off("popup"), "?nofx=smoke,shake switches just those off")
