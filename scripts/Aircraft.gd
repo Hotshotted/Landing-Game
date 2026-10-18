@@ -58,6 +58,11 @@ var _gear: Array[Node3D] = []     # wheels and struts, hidden when the plane has
 var _floats: Array[Node3D] = []
 var _nav: Array[MeshInstance3D] = []   # navigation lights (shown at night)
 
+var _gear_sets: Array = []        # pilot gear parts per gear index
+var _scheme_on := false
+var _scheme_body := Color.WHITE
+var _scheme_accent := Color.WHITE
+
 func _ready() -> void:
 	_outline = ShaderMaterial.new()
 	_outline.shader = preload("res://shaders/outline.gdshader")
@@ -203,6 +208,9 @@ func apply_plane(id: int) -> void:
 
 ## Repaint: `body` is the fuselage colour, `accent` the nose / wings / tail (cosmetic paint schemes use this too).
 func paint(body: Color, accent: Color) -> void:
+	if _scheme_on:
+		body = _scheme_body
+		accent = _scheme_accent
 	for m in _body_mats:
 		m.albedo_color = body
 	for m in _accent_mats:
@@ -273,6 +281,7 @@ func _build_model() -> void:
 	var fin := PrismMesh.new()
 	_p_fin = _part(fin, Vector3(1.7, 1.9, 0.18), Vector3(-3.5, 1.4, 0.0), red, Vector3.ZERO, "accent")                          # fin
 	_part(BoxMesh.new(), Vector3(1.3, 0.55, 1.0), Vector3(0.9, 0.85, 0.0), Color(0.55, 0.8, 0.95)) # canopy
+	_build_pilot()
 	_gear.append(_part(BoxMesh.new(), Vector3(0.14, 0.9, 0.14), Vector3(0.5, -0.85, 0.5), dark))             # main gear struts
 	_gear.append(_part(BoxMesh.new(), Vector3(0.14, 0.9, 0.14), Vector3(0.5, -0.85, -0.5), dark))
 	_gear.append(_part(_wheel(), Vector3(0.76, 0.2, 0.76), Vector3(0.5, -1.32, 0.5), dark, Vector3(90, 0, 0)))
@@ -327,6 +336,45 @@ func _build_model() -> void:
 			_prop2 = pr
 		else:
 			_prop3 = pr
+
+## Whiskers the cat at the controls, and the gear she can wear (all built once; set_pilot_gear just shows one).
+func _build_pilot() -> void:
+	var fur := Color(0.95, 0.6, 0.25)
+	_part(BoxMesh.new(), Vector3(0.62, 0.55, 0.62), Vector3(0.85, 1.27, 0.0), fur)           # head
+	_part(_cone(), Vector3(0.24, 0.36, 0.2), Vector3(0.78, 1.7, 0.2), fur)                # ears
+	_part(_cone(), Vector3(0.24, 0.36, 0.2), Vector3(0.78, 1.7, -0.2), fur)
+	_part(BoxMesh.new(), Vector3(0.1, 0.1, 0.1), Vector3(1.18, 1.22, 0.0), Color(0.9, 0.4, 0.45))   # nose
+	var goggles: Array[MeshInstance3D] = []
+	goggles.append(_part(BoxMesh.new(), Vector3(0.14, 0.2, 0.7), Vector3(1.14, 1.36, 0.0), Color(0.12, 0.12, 0.14)))
+	goggles.append(_part(BoxMesh.new(), Vector3(0.66, 0.07, 0.66), Vector3(0.85, 1.4, 0.0), Color(0.3, 0.2, 0.12)))
+	var cap: Array[MeshInstance3D] = []
+	cap.append(_part(BoxMesh.new(), Vector3(0.7, 0.16, 0.7), Vector3(0.85, 1.6, 0.0), Color(0.2, 0.3, 0.6)))
+	cap.append(_part(BoxMesh.new(), Vector3(0.32, 0.05, 0.55), Vector3(1.25, 1.55, 0.0), Color(0.12, 0.2, 0.45)))
+	var scarf: Array[MeshInstance3D] = []
+	scarf.append(_part(BoxMesh.new(), Vector3(0.7, 0.2, 0.7), Vector3(0.85, 0.98, 0.0), Color(0.9, 0.25, 0.25)))
+	scarf.append(_part(BoxMesh.new(), Vector3(1.1, 0.1, 0.3), Vector3(0.1, 1.05, 0.0), Color(0.9, 0.25, 0.25)))
+	var crown: Array[MeshInstance3D] = []
+	crown.append(_part(_cone(), Vector3(0.5, 0.42, 0.5), Vector3(0.85, 1.78, 0.0), Color(1.0, 0.84, 0.2)))
+	_gear_sets = [[], goggles, cap, scarf, crown]
+	set_pilot_gear(0)
+
+## Show pilot gear `idx` (0 = none).
+func set_pilot_gear(idx: int) -> void:
+	for i in _gear_sets.size():
+		for m in _gear_sets[i]:
+			(m as MeshInstance3D).visible = i == idx
+
+## Cosmetic paint scheme over the aircraft's own colours (`clear_scheme` goes back to them).
+func set_scheme(body: Color, accent: Color) -> void:
+	_scheme_on = true
+	_scheme_body = body
+	_scheme_accent = accent
+	paint(body, accent)
+
+func clear_scheme() -> void:
+	_scheme_on = false
+	var pr: Dictionary = Planes.profile(plane_id)
+	paint(pr["body"], pr["accent"])
 
 func _cone() -> CylinderMesh:
 	var c := CylinderMesh.new()

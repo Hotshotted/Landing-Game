@@ -4,8 +4,8 @@ extends Node3D
 ## weather on a new random runway). A crash (hard landing, off the runway, trees, overrun) is a strike; the third ends the run.
 ## Everything is built once in _ready (and pre-warmed behind a splash); restarts and new rounds reuse it.
 
-enum { MENU, APPROACH, ROLLOUT, CRASH, FADE, OVER, CARD }
-enum { FREE, RIDE }      # what the current run is: endless free flight, or a checkride
+enum { MENU, APPROACH, ROLLOUT, CRASH, FADE, OVER, CARD, AD }
+enum { FREE, RIDE, DAILY }      # what the current run is: endless free flight, a checkride, or the daily approach
 
 var rng := RandomNumberGenerator.new()
 var camera: Camera3D
@@ -33,6 +33,13 @@ var airport_idx := 0            # which named airport of this scenario this appr
 var _flight_acc := 0.0          # seconds flown since the last save
 var _over_kind := ""            # what the OVER screen shows: "run", "ride_fail", "ride_pass"
 var _saved_plane := Planes.C172
+var run_coins := 0              # coins earned this run (the rewarded ad can double them)
+var _coins_award := 0           # coins the latest landing gave (taken back if its bounce ends in a crash)
+var _coins_doubled := false
+var _ride_retry_used := false   # the rewarded "retry landing" has been used on this checkride attempt
+var _daily_day := 0
+var _ad_t := 0.0                # fake ad: seconds left
+var _ad_kind := ""              # "double", "retry" or "interstitial"
 var _min_agl := 9999.0          # lowest the plane has been above the ground this approach (for the no-go-around rule)
 
 var state := MENU
@@ -78,6 +85,8 @@ func _ready() -> void:
 	else:
 		rng.randomize()
 	_apt_rng.randomize()
+	if not DebugFlags.ads_enabled():
+		Ads.enabled = false
 	Save.load_data()
 	best = Save.load_best()
 	sun = DirectionalLight3D.new()
@@ -111,6 +120,7 @@ func _ready() -> void:
 	add_child(hud)
 	hud.plane_step.connect(_on_plane_step)
 	hud.menu_action.connect(_on_menu_action)
+	hud.hangar_pick.connect(_on_hangar_pick)
 	if DebugFlags.tune_enabled():
 		tune_panel = TunePanel.new()
 		add_child(tune_panel)
@@ -125,6 +135,7 @@ func _ready() -> void:
 		plane_id = DebugFlags.plane_forced()
 	round_no = DebugFlags.first_round() - 1
 	hud.set_plane_choice(plane_id)
+	_apply_cosmetics()
 	_begin_round(false)
 	_snap_camera()
 	if not _warmed:
@@ -195,6 +206,8 @@ func _show_menu() -> void:
 	hud.hide_card()
 	mode = FREE
 	hud.hide_logbook()
+	hud.hide_hangar()
+	hud.set_ad_button("", false)
 	hud.show_menu(best, _career_text())
 	_refresh_menu_buttons()
 	hud.set_flight(0.0, 0.0, 1.0, false)
@@ -204,6 +217,11 @@ func _show_menu() -> void:
 func start_run() -> void:
 	mode = FREE
 	_over_kind = "run"
+	run_coins = 0
+	_coins_award = 0
+	_coins_doubled = false
+	Ads.reset()
+	hud.set_ad_button("", false)
 	score = 0
 	strikes = 0
 	landings = 0
@@ -228,8 +246,8 @@ func start_run() -> void:
 ## first (the plane waits); tests pass false.
 func _begin_round(card: bool = true) -> void:
 	var entry: Dictionary = {}
-	if mode == RIDE:
-		entry = _ride_entry()
+	if mode == RIDE or mode == DAILY:
+		entry = _ride_entry() if mode == RIDE else Daily.for_day(_daily_day)
 		round_no = int(entry["round"])
 		rng.seed = int(entry["seed"])
 		select_plane(int(entry["plane"]), false)
@@ -274,7 +292,9 @@ func _begin_round(card: bool = true) -> void:
 	_shake = 0.0
 	_apply_environment()
 	state = APPROACH
-	if mode == RIDE:
+	if mode == DAILY:
+		hud.set_round_text("DAILY APPROACH")
+	elif mode == RIDE:
 		hud.set_round_text("CHECKRIDE %d/%d" % [ride_idx + 1, Career.ride_for(ride_target - 1)["landings"].size()])
 	else:
 		hud.set_round(round_no)
@@ -298,7 +318,10 @@ func _ramp_visible_for_test() -> bool:
 func _card_blurb(entry: Dictionary = {}) -> String:
 	var t: String = Airports.name_of(scenario, airport_idx) + "\n" + Scenarios.BLURBS[scenario]
 	if not entry.is_empty():
-		t += "\nStandards: " + ",  ".join(Career.standard_lines(entry))
+		if mode == RIDE:
+			t += "\nStandards: " + ",  ".join(Career.standard_lines(entry))
+		else:
+			t = "DAILY APPROACH  " + Daily.label(_daily_day) + "\n" + t + "\nOne approach. Best score counts."
 	if weather != Scenarios.CLEAR:
 		t += "\n" + Scenarios.WX_BLURBS[weather]
 	return t
@@ -356,8 +379,8 @@ func streak_multiplier() -> int:
 
 ## Crashes allowed in a run: three, but only one for the glider.
 func strikes_max() -> int:
-	if mode == RIDE:
-		return 1                  # a checkride: one crash and it's over
+	if mode == RIDE or mode == DAILY:
+		return 1                  # a checkride or the daily: one crash and it's over
 	return mini(Tuning.strikes_max, Planes.attempts(plane_id))
 
 ## Switch aircraft (the menu / game-over selector). Takes effect on the next approach.
@@ -464,10 +487,17 @@ func advance(dt: float) -> void:
 			CRASH:
 				if _timer >= Tuning.crash_pause:
 					_leave_crash()
+			AD:
+				_ad_t -= dt
+				hud.set_ad_time(_ad_t)
+				if _ad_t <= 0.0:
+					_finish_ad()
 			FADE:
 				if hud.fade_alpha() >= 0.999 and _timer >= Tuning.fade_time:
 					if _after_fade_over:
 						_show_over()
+					elif mode == FREE and Ads.interstitial_due(Time.get_ticks_msec()):
+						_play_ad("interstitial")      # only here: between rounds, never mid-approach
 					else:
 						_begin_round()
 						_snap_camera()
@@ -646,6 +676,8 @@ func _touchdown() -> void:
 		var sub := "Sink %.1f   %s%.0f m from the markers   %s   +%d%s" % [
 			sink, "+" if px >= airfield.aim_x else "", px - airfield.aim_x, "BOUNCED" if bounced else "no bounce", int(last_result["total"]),
 			(" x%d = %d" % [mult, _awarded]) if mult > 1 else ""]
+		if _coins_award > 0:
+			sub += "   +%dc" % _coins_award
 		if rough:
 			sub = "ROUGH WATER   " + sub
 		hud.popup(Grading.NAMES[g], sub, Grading.COLORS[g], Tuning.popup_time)
@@ -700,6 +732,10 @@ func _crash(reason: String) -> void:
 		hud.set_score(score)
 		if mode == FREE:
 			Save.add("career_points", -_awarded)
+	if _coins_award > 0:
+		Save.add("coins", -_coins_award)
+		run_coins -= _coins_award
+		_coins_award = 0
 	_awarded = 0
 	hud.set_strikes(strikes, strikes_max())
 	hud.popup("CRASH", reason, Color(1.0, 0.35, 0.3), Tuning.crash_pause)
@@ -720,7 +756,9 @@ func _leave_crash() -> void:
 
 ## The landing (or crash) is over: fade out, then a new approach (or the end of the run).
 func _finish_round(over: bool) -> void:
-	if mode == RIDE:
+	if mode == DAILY:
+		over = true             # one approach
+	elif mode == RIDE:
 		if not ride_fails.is_empty():
 			over = true
 		else:
@@ -737,6 +775,9 @@ func _finish_round(over: bool) -> void:
 func _show_over() -> void:
 	state = OVER
 	_death_time = Time.get_ticks_msec() / 1000.0
+	if mode == DAILY:
+		_show_daily_result()
+		return
 	if mode == RIDE:
 		_show_ride_result()
 		return
@@ -751,6 +792,7 @@ func _show_over() -> void:
 	hud.fade_to(0.0)
 	hud.clear_popup()
 	hud.show_over(score, best, landings, new_best, best_streak)
+	_refresh_ad_button()
 
 # ---------- camera / HUD ----------
 
@@ -902,7 +944,7 @@ func _career_text() -> String:
 			t += "Checkride ready: %s\n" % Career.rank_name(rank + 1)
 		else:
 			t += "%d / %d points to the %s checkride\n" % [pts, need, Career.rank_name(rank + 1)]
-	t += "\n"
+	t += "Coins  %d\n\n" % int(Save.data["coins"])
 	return t
 
 func can_take_checkride() -> bool:
@@ -915,6 +957,9 @@ func _refresh_menu_buttons() -> void:
 		hud.set_menu_button("ride", "ALL RANKS", false)
 	else:
 		hud.set_menu_button("ride", "CHECKRIDE", can_take_checkride())
+	var dl: Dictionary = Save.data["daily"]
+	var today := Daily.day_number(Time.get_unix_time_from_system())
+	hud.set_menu_button("daily", "DAILY  %d" % int(dl["best"]) if int(dl["day"]) == today and int(dl["best"]) > 0 else "DAILY")
 
 func _on_menu_action(id: String) -> void:
 	if state != MENU and state != OVER:
@@ -931,8 +976,17 @@ func _on_menu_action(id: String) -> void:
 				start_checkride()
 		"logbook":
 			hud.show_logbook(logbook_text(), Save.data["airports"])
+		"daily":
+			_run_start_ms = Time.get_ticks_msec()
+			_paused_total_ms = 0
+			start_daily()
+		"hangar":
+			hud.show_hangar(Save.data)
+		"ad":
+			_start_rewarded()
 		"back":
 			hud.hide_logbook()
+			hud.hide_hangar()
 			if state == MENU:
 				_show_menu()
 			else:
@@ -959,6 +1013,8 @@ func start_checkride() -> void:
 	ride_idx = 0
 	ride_fails.clear()
 	ride_passed = false
+	_ride_retry_used = false
+	hud.set_ad_button("", false)
 	_saved_plane = plane_id
 	score = 0
 	strikes = 0
@@ -1000,6 +1056,7 @@ func _show_ride_result() -> void:
 	Save.store()
 	_refresh_menu_buttons()
 	hud.set_menu_button("ride", "RETRY" if not ride_passed else "CHECKRIDE", can_take_checkride())
+	_refresh_ad_button()
 
 func _redraw_over() -> void:
 	match _over_kind:
@@ -1018,7 +1075,7 @@ func _continue_from_over() -> void:
 	match _over_kind:
 		"ride_fail":
 			start_checkride()
-		"ride_pass":
+		"ride_pass", "daily":
 			_show_menu()
 		_:
 			start_run()
@@ -1029,6 +1086,12 @@ func _record_landing(grade: int) -> void:
 	Save.add_grade(grade)
 	if mode == FREE:
 		Save.add("career_points", _awarded)
+		Ads.note_round()
+	_coins_award = 0
+	if mode != RIDE:
+		_coins_award = Cosmetics.coins_for(grade, streak_multiplier())
+		Save.add("coins", _coins_award)
+		run_coins += _coins_award
 	var id := Airports.id_of(scenario, airport_idx)
 	if Save.stamp_airport(id, Airports.name_of(scenario, airport_idx), int(Time.get_unix_time_from_system() / 86400.0)):
 		hud.flash_warning("NEW STAMP: " + Airports.name_of(scenario, airport_idx), Color(1.0, 0.85, 0.3))
@@ -1040,6 +1103,11 @@ func debug_unlock_all(on: bool) -> void:
 	Save.store()
 	hud.set_plane_choice(plane_id)
 	_refresh_menu_buttons()
+
+func debug_coins() -> void:
+	Save.add("coins", 500)
+	if hud.hangar_visible():
+		hud.show_hangar(Save.data)
 
 func debug_cycle_plane() -> void:
 	var list := available_planes()
@@ -1062,8 +1130,136 @@ func _on_debug_action(id: String) -> void:
 			debug_cycle_plane()
 		"reset_save":
 			debug_reset_save()
+		"coins":
+			debug_coins()
 		"checkride":
 			if state == MENU or state == OVER:
 				ride_target = int(Save.data["rank"]) + 1
 				if ride_target <= Career.max_rank():
 					start_checkride()
+
+# ---------- daily approach ----------
+
+func start_daily() -> void:
+	mode = DAILY
+	_over_kind = "daily"
+	_daily_day = Daily.day_number(Time.get_unix_time_from_system())
+	var dl: Dictionary = Save.data["daily"]
+	if int(dl["day"]) != _daily_day:
+		dl["day"] = _daily_day
+		dl["best"] = 0
+		dl["tries"] = 0
+	dl["tries"] = int(dl["tries"]) + 1
+	_saved_plane = plane_id
+	score = 0
+	strikes = 0
+	landings = 0
+	last_result = {}
+	last_crash = ""
+	sim_time = 0.0
+	streak = 0
+	best_streak = 0
+	run_coins = 0
+	_coins_award = 0
+	hud.set_ad_button("", false)
+	hud.set_streak(0)
+	hud.hide_overlay()
+	hud.clear_popup()
+	hud.set_score(0)
+	hud.set_strikes(0, 1)
+	hud.set_fade_now(0.0)
+	fx.clear()
+	get_tree().paused = false
+	_begin_round()
+	_snap_camera()
+
+func _show_daily_result() -> void:
+	select_plane(_saved_plane, false)
+	var dl: Dictionary = Save.data["daily"]
+	var new_best := score > int(dl["best"])
+	if new_best:
+		dl["best"] = score
+	Save.store()
+	_refresh_menu_buttons()
+	hud.fade_to(0.0)
+	hud.clear_popup()
+	var e := Daily.for_day(_daily_day)
+	var what := "%s, %s, %s" % [Planes.NAMES[e["plane"]], Scenarios.NAMES[e["scn"]].capitalize(), Scenarios.WX_NAMES[e["wx"]].capitalize()]
+	hud.show_notice("DAILY APPROACH", "%s\n%s\n\nScore  %d\n%s\nAttempts today  %d" % [Daily.label(_daily_day), what, score, "NEW BEST!" if new_best else "Best  %d" % int(dl["best"]), int(dl["tries"])], "TAP FOR MENU", Color(1.0, 0.8, 0.35))
+	hud.set_ad_button("", false)
+
+# ---------- cosmetics ----------
+
+func _apply_cosmetics() -> void:
+	var pi := int(Save.data["paint"])
+	if pi > 0 and pi < Cosmetics.PAINTS.size():
+		aircraft.set_scheme(Cosmetics.PAINTS[pi]["body"], Cosmetics.PAINTS[pi]["accent"])
+	else:
+		aircraft.clear_scheme()
+	aircraft.set_pilot_gear(clampi(int(Save.data["gear"]), 0, Cosmetics.GEAR.size() - 1))
+
+func _on_hangar_pick(kind: String, idx: int) -> void:
+	if state != MENU and state != OVER:
+		return
+	if not Cosmetics.owned(Save.data, kind, idx):
+		if not Cosmetics.buy(Save.data, kind, idx):
+			hud.flash_warning("Not enough coins", Color(1.0, 0.5, 0.4))
+			return
+	Save.data[kind] = idx
+	Save.store()
+	_apply_cosmetics()
+	hud.show_hangar(Save.data)
+
+# ---------- ads (stubs) ----------
+
+func _play_ad(kind: String) -> void:
+	_ad_kind = kind
+	_ad_t = Tuning.ad_fake_seconds
+	state = AD
+	hud.show_ad({"double": "Rewarded: double your coins", "retry": "Rewarded: retry the checkride landing", "interstitial": "Interstitial"}[kind] + "\n(stub - no real ad)", _ad_t)
+
+func _finish_ad() -> void:
+	hud.hide_ad()
+	Ads.played(Time.get_ticks_msec())
+	match _ad_kind:
+		"double":
+			Save.add("coins", run_coins)
+			_coins_doubled = true
+			hud.flash_warning("+%d coins!" % run_coins, Color(1.0, 0.85, 0.3))
+			Save.store()
+			state = OVER
+			_death_time = Time.get_ticks_msec() / 1000.0
+			hud.show_over(score, best, landings, false, best_streak)
+			_refresh_ad_button()
+		"retry":
+			_ride_retry_used = true
+			ride_fails.clear()
+			mode = RIDE
+			strikes = 0
+			hud.hide_overlay()
+			hud.set_strikes(0, 1)
+			_begin_round()
+			_snap_camera()
+		_:
+			_begin_round()
+			_snap_camera()
+
+## The rewarded button on the run-over / checkride-failed screens.
+func _refresh_ad_button() -> void:
+	if state != OVER:
+		hud.set_ad_button("", false)
+		return
+	if _over_kind == "run" and run_coins > 0 and not _coins_doubled and DebugFlags.ads_enabled():
+		hud.set_ad_button("WATCH AD: DOUBLE COINS (+%d)" % run_coins, true)
+	elif _over_kind == "ride_fail" and not _ride_retry_used and DebugFlags.ads_enabled():
+		hud.set_ad_button("WATCH AD: RETRY THIS LANDING", true)
+	else:
+		hud.set_ad_button("", false)
+
+func _start_rewarded() -> void:
+	if state != OVER:
+		return
+	if _over_kind == "run" and run_coins > 0 and not _coins_doubled:
+		_play_ad("double")
+	elif _over_kind == "ride_fail" and not _ride_retry_used:
+		_play_ad("retry")

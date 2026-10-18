@@ -62,3 +62,17 @@ Instrument: twin, night, fog; Commercial: glider, seaplane, truck, turbulence; C
 The **logbook** shows flight time, landings, crashes, the grade tally, best run / streak and one stamp per named airport
 (27 of them), earned the first time you land there. Everything is saved as one versioned JSON document (`Save.gd`, migrates the
 old best-score file; unreadable saves start fresh). `?tune` has Unlock all, Next aircraft, Checkride and Reset save buttons.
+
+## Cosmetics, daily approach, ad stubs (phase 5)
+
+- **Coins** come from every free-flight / daily landing (Greaser! pays most, times the streak multiplier; a landing that ends in a
+  crash gives them back). The **Hangar** spends them on paint schemes (applied to whichever aircraft you fly) and gear for the pilot,
+  Whiskers the cat (goggles, cap, scarf, crown). Purely visual.
+- **Daily Approach**: one hard approach per calendar day, the same for everyone (seeded by the date; weather is never clear,
+  difficulty round `daily_round`). One landing; the best score of the day is saved locally (retries allowed, same approach).
+- **Ad hooks** are stubs (`Ads.gd`) with a fake "Ad playing" screen of `ad_fake_seconds`: rewarded *Retry this checkride landing*
+  (once per attempt) and *Double coins*; an interstitial only on the fade between free-flight rounds, every `ad_interstitial_every`
+  landed rounds and at least `ad_min_gap_seconds` apart - never mid-approach, in a checkride or in the daily. `?noads` switches
+  them off. A real ad SDK replaces the fake screen later.
+- `?tune`: Unlock all, Next aircraft, Checkride, Reset save, +500 coins (plus the earlier force scenario / weather buttons and
+  `?scenario=`, `?weather=`, `?plane=` flags).

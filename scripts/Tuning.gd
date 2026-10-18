@@ -208,6 +208,22 @@ var streak_glow_max := 0.6
 var go_around_low := 15.0
 var go_around_climb := 14.0
 
+# ---------- Coins, daily approach, ad stubs ----------
+## Coins per landing by grade (Greaser! .. Hard), times the streak multiplier. They only buy paint and pilot gear.
+var coins_greaser := 10
+var coins_smooth := 6
+var coins_good := 4
+var coins_firm := 2
+var coins_hard := 1
+## The daily approach is always flown at this difficulty round.
+var daily_round := 8
+## The fake "Ad playing" screen lasts this long (seconds). Real ad SDKs replace Ads.gd's stubs later.
+var ad_fake_seconds := 2.0
+## An interstitial (between rounds only) is offered after this many landed rounds ...
+var ad_interstitial_every := 4
+## ... and never sooner than this many seconds after the last ad.
+var ad_min_gap_seconds := 60.0
+
 # ---------- Scenarios ----------
 ## The title card at the start of each approach (seconds; a tap skips it).
 var card_time := 1.7

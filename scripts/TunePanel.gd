@@ -53,6 +53,8 @@ const ENTRIES := [
 	["streak_glow_max", "Streak glow", 0.0, 1.0, 0.05],
 	["go_around_low", "Go-around: low point", 5.0, 40.0, 1.0],
 	["go_around_climb", "Go-around: climb that counts", 5.0, 40.0, 1.0],
+	["ad_fake_seconds", "Ad stub: seconds", 0.5, 6.0, 0.5],
+	["ad_interstitial_every", "Interstitial every N rounds", 2.0, 10.0, 1.0],
 	["engine_out_drag", "Engine out: speed decay", 0.0, 0.12, 0.005],
 	["turb_strength", "Turbulence strength", 0.0, 4.0, 0.1],
 	["shear_sink", "Wind shear downdraft", 0.0, 8.0, 0.1],
@@ -242,6 +244,13 @@ func build() -> void:
 	career_row.add_child(ride_btn)
 	career_row.add_child(wipe_btn)
 	column.add_child(career_row)
+	var coin_row := HBoxContainer.new()
+	coin_row.add_theme_constant_override("separation", 20)
+	var coin_btn := _make_button("+500 coins", 28)
+	coin_btn.set_meta("debug", "coins")
+	coin_btn.pressed.connect(func(): debug_action.emit("coins"))
+	coin_row.add_child(coin_btn)
+	column.add_child(coin_row)
 	_out = _make_label("", 26, HORIZONTAL_ALIGNMENT_LEFT)
 	_out.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_out.custom_minimum_size = Vector2(0, 150)

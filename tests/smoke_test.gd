@@ -128,6 +128,8 @@ func run_all() -> void:
 	load_classes()
 	SV.enabled = false
 	SV.data = SV.default_data()
+	var ADS: GDScript = load("res://scripts/Ads.gd")
+	ADS.enabled = false          # (section 18 tests the ad stubs)
 	SV.data["unlock_all"] = true      # (the earlier sections fly every aircraft and scenario; section 17 tests the locks)
 	print("== 1. boot ==  [nodes %d]" % nodes())
 	var scene: PackedScene = load("res://scenes/main.tscn")
@@ -1635,6 +1637,222 @@ func run_all() -> void:
 	main._end_card()
 	check(nodes() == n17 and resources() <= r17 + 3, "logbook, checkrides and landings allocate nothing (%d -> %d nodes)" % [n17, nodes()])
 	SV.data["unlock_all"] = true
+	force(-1, -1)
+
+	print("== 18. cosmetics, daily approach, ad stubs ==  [nodes %d]" % nodes())
+	var COS: GDScript = load("res://scripts/Cosmetics.gd")
+	var DLY: GDScript = load("res://scripts/Daily.gd")
+	SV.data = SV.default_data()
+	SV.data["unlock_all"] = true
+	main.start_run()
+	main._end_card()
+	# --- coins and the hangar
+	check(COS.coins_for(0, 1) > COS.coins_for(1, 1) and COS.coins_for(1, 1) > COS.coins_for(4, 1) and COS.coins_for(4, 1) >= 1, "better landings pay more coins")
+	check(COS.coins_for(0, 3) == 3 * COS.coins_for(0, 1), "the streak multiplier multiplies coins too")
+	new_round(1801, 3)
+	land_at(0.5, 0.0)
+	check(SV.data["coins"] == COS.coins_for(0, 1) and main.run_coins == SV.data["coins"], "a Greaser earns coins (%d)" % SV.data["coins"])
+	check(main.hud._popup_text_for_test().contains("c"), "(coins in the popup)")
+	main._crash("test")
+	check(SV.data["coins"] == 0 and main.run_coins == 0, "a landing that ends in a crash gives its coins back")
+	check(not COS.buy(SV.data, "paint", 1) and SV.data["coins"] == 0, "can't buy with no coins")
+	SV.data["coins"] = 500
+	check(COS.buy(SV.data, "paint", 1) and SV.data["coins"] == 500 - int(COS.PAINTS[1]["cost"]) and COS.owned(SV.data, "paint", 1), "buying paint takes its price and owns it")
+	var coins_now: int = SV.data["coins"]
+	check(COS.buy(SV.data, "paint", 1) and SV.data["coins"] == coins_now, "buying what you own is free")
+	main.state = MAIN.MENU
+	main._on_menu_action("hangar")
+	check(main.hud.hangar_visible() and main.hud._hangar_paint.size() == COS.PAINTS.size() and main.hud._hangar_gear.size() == COS.GEAR.size(), "the hangar lists every paint and gear item")
+	check(main.hud._hangar_paint[0].text == "[CLASSIC]" and main.hud._hangar_paint[2].text.contains("150"), "equipped is bracketed, unowned shows its price")
+	main._on_hangar_pick("paint", 1)
+	check(SV.data["paint"] == 1, "tapping an owned paint equips it")
+	var body_mat: StandardMaterial3D = main.aircraft._body_mats[0]
+	check(body_mat.albedo_color.is_equal_approx(COS.PAINTS[1]["body"]), "...and the aircraft is repainted")
+	main.select_plane(PL.CUB)
+	check((main.aircraft._body_mats[0] as StandardMaterial3D).albedo_color.is_equal_approx(COS.PAINTS[1]["body"]), "the paint stays when you change aircraft")
+	main._on_hangar_pick("paint", 0)
+	check((main.aircraft._body_mats[0] as StandardMaterial3D).albedo_color.is_equal_approx(PL.profile(PL.CUB)["body"]), "Classic goes back to the aircraft's own paint")
+	SV.data["coins"] = 50
+	main._on_hangar_pick("gear", 4)
+	check(SV.data["gear"] == 0 and not COS.owned(SV.data, "gear", 4), "gear you can't afford isn't bought or worn")
+	SV.data["coins"] = 200
+	main._on_hangar_pick("gear", 1)
+	var worn := 0
+	for i in main.aircraft._gear_sets.size():
+		for m in main.aircraft._gear_sets[i]:
+			if (m as MeshInstance3D).visible:
+				worn += 1
+	check(SV.data["gear"] == 1 and worn == main.aircraft._gear_sets[1].size() and worn > 0, "Whiskers wears the goggles (and only those)")
+	main._on_menu_action("back")
+	check(not main.hud.hangar_visible() and main.state == MAIN.MENU, "BACK leaves the hangar")
+	var sv2: Dictionary = SV.migrate({"coins": "12", "paint": 3, "owned_paint": [0, 3, 3, -1, 99], "owned_gear": "x", "daily": {"day": 5, "best": 40}})
+	check(sv2["coins"] == 12 and sv2["owned_paint"] == [0, 3, 99] and sv2["owned_gear"] == [0] and sv2["daily"]["best"] == 40 and sv2["daily"]["tries"] == 0, "the save migrates the new fields (%s)" % str(sv2["owned_paint"]))
+	main.select_plane(PL.C172)
+	# --- the daily approach
+	var d1: Dictionary = DLY.for_day(20000)
+	check(d1 == DLY.for_day(20000), "the same day always gives the same approach")
+	var planes_seen := {}
+	var daily_ok := true
+	for day in range(20000, 20060):
+		var e: Dictionary = DLY.for_day(day)
+		planes_seen[e["plane"]] = true
+		if not (PL.offers(e["plane"], e["scn"]) and PL.weather(e["plane"]).has(e["wx"]) and e["wx"] != SC.CLEAR and e["round"] == int(tn.daily_round)):
+			daily_ok = false
+	check(daily_ok and planes_seen.size() >= 3, "every day is hard (weather, round %d), suits its aircraft, and they vary (%d aircraft in 60 days)" % [int(tn.daily_round), planes_seen.size()])
+	check(DLY.for_day(20000) != DLY.for_day(20001), "tomorrow's approach differs")
+	SV.data["daily"] = {"day": -1, "best": 0, "tries": 0}
+	main.state = MAIN.MENU
+	main._on_menu_action("daily")
+	var today: int = DLY.day_number(Time.get_unix_time_from_system())
+	var de: Dictionary = DLY.for_day(today)
+	check(main.mode == MAIN.DAILY and main.state == MAIN.CARD and main.scenario == de["scn"] and main.weather == de["wx"] and main.plane_id == de["plane"], "the DAILY button starts today's approach")
+	check(main.hud._card_blurb.text.contains("DAILY APPROACH") and main.strikes_max() == 1, "its card says so; a crash ends it")
+	var len_d: float = main.airfield.rwy_len
+	main._end_card()
+	land_at(0.5, 0.0)
+	check(main.score > 0, "(landed it: %d)" % main.score)
+	var first_score: int = main.score
+	for i in 600:
+		main.advance(1.0 / 30.0)
+		if main.state == MAIN.OVER:
+			break
+	check(main.state == MAIN.OVER and SV.data["daily"]["best"] == first_score and SV.data["daily"]["tries"] == 1 and main.hud._ov_title.text == "DAILY APPROACH", "one approach, then the result; the best score is saved (%d)" % first_score)
+	check(main.plane_id == PL.C172, "...and your own aircraft comes back")
+	main._continue_from_over()
+	check(main.state == MAIN.MENU, "tapping goes back to the menu")
+	main._on_menu_action("daily")
+	check(main.airfield.rwy_len == len_d and SV.data["daily"]["tries"] == 2, "play it again: the same runway, attempt 2")
+	main._end_card()
+	main._crash("test")
+	for i in 600:
+		main.advance(1.0 / 30.0)
+		if main.state == MAIN.OVER:
+			break
+	check(main.state == MAIN.OVER and SV.data["daily"]["best"] == first_score, "a crash scores nothing and keeps the earlier best")
+	SV.data["daily"] = {"day": today - 1, "best": 999, "tries": 4}
+	main._continue_from_over()
+	main._on_menu_action("daily")
+	check(SV.data["daily"]["day"] == today and SV.data["daily"]["best"] == 0 and SV.data["daily"]["tries"] == 1, "a new day starts a fresh best")
+	main._end_card()
+	main._crash("test")
+	for i in 600:
+		main.advance(1.0 / 30.0)
+		if main.state == MAIN.OVER:
+			break
+	main._continue_from_over()
+	# --- ad stubs: interstitials only between rounds
+	ADS.enabled = true
+	var gap_save: float = tn.ad_min_gap_seconds
+	var every_save: int = tn.ad_interstitial_every
+	tn.ad_min_gap_seconds = 0.0
+	tn.ad_interstitial_every = 2
+	main.start_run()
+	main._end_card()
+	var ad_in_play := false
+	var ad_seen := 0
+	for r in 6:
+		new_round(1810 + r, 3)
+		main._end_card()
+		land_at(0.5, 0.0)
+		for i in 600:
+			main.advance(1.0 / 30.0)
+			if main.state == MAIN.AD:
+				ad_seen += 1
+				if i < 5:
+					ad_in_play = true      # an ad right after the landing, before the fade even began
+				break
+			if main.state == MAIN.CARD or main.state == MAIN.OVER:
+				break
+		if main.state == MAIN.AD:
+			check(main.hud.ad_visible() and main.hud._ad_sub.text.contains("stub"), "the fake Ad playing screen shows")
+			main.advance(float(tn.ad_fake_seconds) + 0.1)
+			check(main.state == MAIN.CARD and not main.hud.ad_visible(), "...and ends by itself, then the next approach begins")
+	check(ad_seen >= 2 and ad_seen <= 3 and not ad_in_play, "an interstitial every other landed round, only on the fade between rounds (%d in 6)" % ad_seen)
+	ADS.rounds_since = 99
+	main.start_run()
+	tn.ad_min_gap_seconds = 60.0
+	ADS.rounds_since = 99
+	ADS.last_ms = Time.get_ticks_msec()
+	check(not ADS.interstitial_due(Time.get_ticks_msec() + 1000), "never sooner than ad_min_gap_seconds after the last ad")
+	check(ADS.interstitial_due(Time.get_ticks_msec() + 61000), "...and due again after it")
+	tn.ad_min_gap_seconds = 0.0
+	ADS.enabled = false
+	check(not ADS.interstitial_due(Time.get_ticks_msec() + 99999), "?noads / disabled: never")
+	ADS.enabled = true
+	# --- rewarded: double coins
+	main.start_run()
+	main._end_card()
+	new_round(1830, 3)
+	land_at(0.5, 0.0)
+	var coins_before: int = SV.data["coins"]
+	var earned: int = main.run_coins
+	main._finish_round(true)
+	for i in 600:
+		main.advance(1.0 / 30.0)
+		if main.state == MAIN.OVER:
+			break
+	check(main.state == MAIN.OVER and main.hud._menu_buttons["ad"].visible and main.hud._menu_buttons["ad"].text.contains("DOUBLE"), "the run-over screen offers a rewarded double-coins ad")
+	main._on_menu_action("ad")
+	check(main.state == MAIN.AD and main.hud.ad_visible(), "tapping it plays the fake ad")
+	main.advance(float(tn.ad_fake_seconds) + 0.1)
+	check(main.state == MAIN.OVER and SV.data["coins"] == coins_before + earned and not main.hud._menu_buttons["ad"].visible, "then the coins are doubled (+%d) and the offer is gone" % earned)
+	# --- rewarded: retry a checkride landing
+	SV.data["career_points"] = 300
+	main._continue_from_over()
+	main.state = MAIN.MENU
+	main._on_menu_action("ride")
+	main._end_card()
+	land_at(3.4, 0.0)
+	for i in 600:
+		main.advance(1.0 / 30.0)
+		if main.state == MAIN.OVER:
+			break
+	check(main.state == MAIN.OVER and not main.ride_passed and main.hud._menu_buttons["ad"].visible and main.hud._menu_buttons["ad"].text.contains("RETRY"), "a failed checkride offers a rewarded retry of the landing")
+	main._on_menu_action("ad")
+	main.advance(float(tn.ad_fake_seconds) + 0.1)
+	check(main.mode == MAIN.RIDE and main.state == MAIN.CARD and main.ride_idx == 0 and main.ride_fails.is_empty(), "after the ad the same landing starts again")
+	main._end_card()
+	land_at(0.6, 0.0)
+	check(main.ride_fails.is_empty(), "(and a good one passes: %s)" % str(main.ride_fails))
+	main._end_card()
+	main._crash("test")
+	for i in 900:
+		main.advance(1.0 / 30.0)
+		if main.state == MAIN.OVER:
+			break
+	check(main.state == MAIN.OVER and not main.hud._menu_buttons["ad"].visible, "the retry can only be used once per attempt")
+	# --- flags and allocation
+	DF.parse(["noads"] as Array[String])
+	check(not DF.ads_enabled() and DF.summary() == "noads", "?noads is a flag and shows in the summary")
+	DF.parse([] as Array[String])
+	check(DF.ads_enabled(), "no flag: ads on")
+	main._continue_from_over()
+	main.start_run()
+	main._end_card()
+	var n18 := nodes()
+	var r18 := resources()
+	ADS.enabled = true
+	tn.ad_interstitial_every = 1
+	for i in 3:
+		main.state = MAIN.MENU
+		main._on_menu_action("hangar")
+		main._on_hangar_pick("paint", i % 2)
+		main._on_menu_action("back")
+		main._on_menu_action("daily")
+		main._end_card()
+		land_at(0.6, 0.0)
+		for k in 300:
+			main.advance(1.0 / 30.0)
+			if main.state == MAIN.AD:
+				main.advance(float(tn.ad_fake_seconds) + 0.1)
+	main.start_run()
+	main._end_card()
+	check(nodes() == n18 and resources() <= r18 + 3, "hangar, daily and ad screens allocate nothing (%d -> %d nodes)" % [n18, nodes()])
+	tn.ad_min_gap_seconds = gap_save
+	tn.ad_interstitial_every = every_save
+	ADS.enabled = false
+	SV.data["unlock_all"] = true
+	main._on_hangar_pick("paint", 0)
 	force(-1, -1)
 
 	print("== 9. debug flags / frame time ==  [nodes %d]" % nodes())

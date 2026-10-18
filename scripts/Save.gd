@@ -29,6 +29,12 @@ static func default_data() -> Dictionary:
 		"checkrides": {},        # target rank (as text) -> {"passes": int, "attempts": int}
 		"plane": 1,              # the aircraft last flown
 		"unlock_all": false,     # ?tune debug: every rank, aircraft and scenario open
+		"coins": 0,              # spent on paint and pilot gear
+		"paint": 0,              # equipped paint scheme (index into Cosmetics.PAINTS)
+		"gear": 0,               # equipped pilot gear (index into Cosmetics.GEAR)
+		"owned_paint": [0],
+		"owned_gear": [0],
+		"daily": {"day": -1, "best": 0, "tries": 0},   # the daily approach: which day, best score, attempts that day
 	}
 
 ## Read the save file (or migrate the old one). With the file switched off the in-memory data is left alone.
@@ -71,7 +77,7 @@ static func migrate(d: Dictionary) -> Dictionary:
 	var v := int(d.get("version", 0))
 	for k in d:
 		out[k] = d[k]
-	for k in ["best", "best_streak", "career_points", "rank", "landings", "crashes", "plane"]:
+	for k in ["best", "best_streak", "career_points", "rank", "landings", "crashes", "plane", "coins", "paint", "gear"]:
 		out[k] = int(d.get(k, out[k]))
 	out["rank"] = clampi(int(out["rank"]), 0, 5)
 	out["plane"] = clampi(int(out["plane"]), 0, 4)
@@ -86,6 +92,22 @@ static func migrate(d: Dictionary) -> Dictionary:
 		var dv = d.get(k, {})
 		out[k] = dv if dv is Dictionary else {}
 	out["unlock_all"] = bool(d.get("unlock_all", false))
+	for k in ["owned_paint", "owned_gear"]:
+		var own: Array = [0]
+		var oin = d.get(k, own)
+		if oin is Array:
+			for item in oin:
+				if int(item) > 0 and not own.has(int(item)):
+					own.append(int(item))
+		out[k] = own
+	out["paint"] = clampi(int(out["paint"]), 0, 99)
+	out["gear"] = clampi(int(out["gear"]), 0, 99)
+	var dl = d.get("daily", {})
+	var daily: Dictionary = {"day": -1, "best": 0, "tries": 0}
+	if dl is Dictionary:
+		for k in daily:
+			daily[k] = int((dl as Dictionary).get(k, daily[k]))
+	out["daily"] = daily
 	out["version"] = maxi(v, VERSION)
 	return out
 

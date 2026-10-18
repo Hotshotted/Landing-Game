@@ -13,6 +13,7 @@ extends RefCounted
 ##   ?scenario=short|engineout|night|mountain|carrier|water|truck|standard   force that scenario every approach
 ##   ?weather=fog|rain|turbulence|shear|clear          force that weather every approach
 ##   ?plane=cub|172|twin|glider|jet                    start in that aircraft
+##   ?noads                                            no ad stubs (interstitials)
 ## Combine with "&", e.g.  ?nofx=smoke&noprewarm&perf
 ## The active flags are printed under the build stamp.
 
@@ -30,6 +31,7 @@ static var seed_value := -1
 static var scenario_value := -1
 static var weather_value := -1
 static var plane_value := -1
+static var noads := false
 
 ## True if the named effect has been switched off.
 static func off(effect: String) -> bool:
@@ -68,6 +70,10 @@ static func weather_forced() -> int:
 	_load()
 	return weather_value
 
+static func ads_enabled() -> bool:
+	_load()
+	return not noads
+
 static func plane_forced() -> int:
 	_load()
 	return plane_value
@@ -100,6 +106,8 @@ static func summary() -> String:
 		parts.append("weather=" + Scenarios.WX_KEYS[weather_value])
 	if plane_value >= 0:
 		parts.append("plane=" + Planes.KEYS[plane_value])
+	if noads:
+		parts.append("noads")
 	for b in _bad:
 		parts.append("?" + b)
 	return " ".join(parts)
@@ -131,6 +139,7 @@ static func parse(args: Array[String]) -> void:
 	scenario_value = -1
 	weather_value = -1
 	plane_value = -1
+	noads = false
 	for a in args:
 		var kv := a.split("=", true, 1)
 		var key := kv[0].uri_decode().to_lower()
@@ -147,6 +156,8 @@ static func parse(args: Array[String]) -> void:
 						_bad.append(name)
 			"noprewarm":
 				noprewarm = true
+			"noads":
+				noads = true
 			"perf":
 				perf = true
 			"tune":

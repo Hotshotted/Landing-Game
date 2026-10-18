@@ -35,6 +35,16 @@ var _log_stamp_names: Array[Label] = []
 var _log_back: Button
 var _log_on := false
 const STAMP_COLS := 3
+signal hangar_pick(kind: String, idx: int)
+var _hangar_root: Control
+var _hangar_paint: Array[Button] = []
+var _hangar_gear: Array[Button] = []
+var _hangar_on := false
+var _ad_root: ColorRect
+var _ad_title: Label
+var _ad_sub: Label
+var _ad_time: Label
+var _ad_on := false
 var _sel_row: Control
 var _sel_name: Label
 var _sel_info: Label
@@ -239,6 +249,8 @@ func _ready() -> void:
 	_place(_sel_next, 0, 0.52, 936, 0, 120, 100)
 	_build_menu_buttons()
 	_build_logbook()
+	_build_hangar()
+	_build_ad()
 	# menu / game-over overlay
 	_overlay = ColorRect.new()
 	_overlay.color = Color(0.05, 0.08, 0.14, 0.62)
@@ -285,6 +297,8 @@ func _ready() -> void:
 	move_child(_sel_row, _splash.get_index())     # (the aircraft selector sits above the dark overlay, below the splash)
 	move_child(_menu_row, _splash.get_index())
 	move_child(_log_root, _splash.get_index())
+	move_child(_hangar_root, _splash.get_index())
+	move_child(_ad_root, _splash.get_index())
 	move_child(_stamp, get_child_count() - 1)
 
 ## The buttons under the aircraft selector (menu and run-over screens). Built once; only shown / hidden / re-texted.
@@ -305,16 +319,147 @@ func _build_menu_buttons() -> void:
 		_menu_row.add_child(b)
 		_place(b, 0, 0.78, 30 + i * 342, 0, 330, 120)
 		_menu_buttons[id] = b
+	var ids2 := ["daily", "hangar"]
+	var texts2 := ["DAILY", "HANGAR"]
+	for i in ids2.size():
+		var b2 := Button.new()
+		b2.text = texts2[i]
+		b2.add_theme_font_size_override("font_size", 44)
+		var id2: String = ids2[i]
+		b2.pressed.connect(func(): menu_action.emit(id2))
+		_menu_row.add_child(b2)
+		_place(b2, 0, 0.78, 30 + i * 342, 140, 330, 120)
+		_menu_buttons[id2] = b2
+	# the rewarded-ad button (a stub; shown only where an ad can be offered)
+	var ad := Button.new()
+	ad.text = "WATCH AD"
+	ad.add_theme_font_size_override("font_size", 40)
+	ad.pressed.connect(func(): menu_action.emit("ad"))
+	_menu_row.add_child(ad)
+	_place(ad, 0, 0.78, 372, 140, 678, 120)
+	ad.visible = false
+	_menu_buttons["ad"] = ad
 
-## Add a button to the menu row's second line (the later phases use this: daily approach, hangar).
-func add_menu_button(id: String, text: String, slot: int) -> void:
-	var b := Button.new()
+func set_ad_button(text: String, shown: bool) -> void:
+	var b: Button = _menu_buttons["ad"]
 	b.text = text
-	b.add_theme_font_size_override("font_size", 44)
-	b.pressed.connect(func(): menu_action.emit(id))
-	_menu_row.add_child(b)
-	_place(b, 0, 0.78, 30 + slot * 342, 140, 330, 120)
-	_menu_buttons[id] = b
+	b.visible = shown
+
+## The hangar: paint schemes and pilot gear as buttons (buy / equip), built once.
+func _build_hangar() -> void:
+	_hangar_root = Control.new()
+	_hangar_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hangar_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_hangar_root.visible = false
+	add_child(_hangar_root)
+	var h1 := _label(36, HORIZONTAL_ALIGNMENT_CENTER)
+	remove_child(h1)
+	_hangar_root.add_child(h1)
+	h1.text = "PAINT"
+	_place(h1, 0, 0, 0, 500, 1080, 50)
+	h1.anchor_right = 1.0
+	h1.offset_right = 0
+	for i in Cosmetics.PAINTS.size():
+		_hangar_paint.append(_hangar_button("paint", i, 560 + (i / 2) * 110))
+	var h2 := _label(36, HORIZONTAL_ALIGNMENT_CENTER)
+	remove_child(h2)
+	_hangar_root.add_child(h2)
+	h2.text = "WHISKERS' GEAR"
+	_place(h2, 0, 0, 0, 910, 1080, 50)
+	h2.anchor_right = 1.0
+	h2.offset_right = 0
+	for i in Cosmetics.GEAR.size():
+		_hangar_gear.append(_hangar_button("gear", i, 970 + (i / 2) * 110))
+	var back := Button.new()
+	back.text = "BACK"
+	back.add_theme_font_size_override("font_size", 48)
+	back.pressed.connect(func(): menu_action.emit("back"))
+	_hangar_root.add_child(back)
+	_place(back, 0.5, 0, -170, 1330, 340, 110)
+
+func _hangar_button(kind: String, idx: int, y: float) -> Button:
+	var b := Button.new()
+	b.add_theme_font_size_override("font_size", 32)
+	b.pressed.connect(func(): hangar_pick.emit(kind, idx))
+	_hangar_root.add_child(b)
+	_place(b, 0, 0, 30 + (idx % 2) * 520, y, 500, 96)
+	return b
+
+## Refresh the hangar's buttons from the save: "[NAME]" equipped, "NAME" owned, "NAME  150c" for sale.
+func show_hangar(data: Dictionary) -> void:
+	_hangar_on = true
+	_set_overlay(true)
+	_ov_title.text = "HANGAR"
+	_ov_title.add_theme_color_override("font_color", Color(0.7, 0.9, 1.0))
+	_ov_title.add_theme_font_size_override("font_size", 110)
+	_ov_body.text = "Coins  %d\nPaint and gear are just for looks." % int(data["coins"])
+	_ov_prompt.text = ""
+	for i in _hangar_paint.size():
+		var p: Dictionary = Cosmetics.PAINTS[i]
+		_hangar_paint[i].text = _hangar_label(p["name"], p["cost"], (data["owned_paint"] as Array).has(i), int(data["paint"]) == i)
+		_hangar_paint[i].disabled = false
+	for i in _hangar_gear.size():
+		var g: Dictionary = Cosmetics.GEAR[i]
+		_hangar_gear[i].text = _hangar_label(g["name"], g["cost"], (data["owned_gear"] as Array).has(i), int(data["gear"]) == i)
+	_hangar_root.visible = true
+	_menu_row.visible = false
+	_sel_row.visible = false
+
+func _hangar_label(item_name: String, cost: int, owned: bool, equipped: bool) -> String:
+	if equipped:
+		return "[%s]" % item_name
+	return item_name if owned else "%s  %dc" % [item_name, cost]
+
+func hide_hangar() -> void:
+	_hangar_on = false
+	_hangar_root.visible = false
+	_ov_title.add_theme_font_size_override("font_size", 150)
+
+func hangar_visible() -> bool:
+	return _hangar_on
+
+## The fake "Ad playing" screen (a stub for a real ad SDK): covers everything but the splash.
+func _build_ad() -> void:
+	_ad_root = ColorRect.new()
+	_ad_root.color = Color(0.04, 0.04, 0.06, 0.96)
+	_ad_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_ad_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_ad_root.visible = false
+	add_child(_ad_root)
+	_ad_title = _label(110, HORIZONTAL_ALIGNMENT_CENTER)
+	remove_child(_ad_title)
+	_ad_root.add_child(_ad_title)
+	_ad_title.text = "AD PLAYING"
+	_place(_ad_title, 0, 0.36, 0, 0, 1080, 140)
+	_ad_title.anchor_right = 1.0
+	_ad_title.offset_right = 0
+	_ad_sub = _label(40, HORIZONTAL_ALIGNMENT_CENTER)
+	remove_child(_ad_sub)
+	_ad_root.add_child(_ad_sub)
+	_ad_sub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_place(_ad_sub, 0.5, 0.36, -420, 160, 840, 140)
+	_ad_time = _label(80, HORIZONTAL_ALIGNMENT_CENTER)
+	remove_child(_ad_time)
+	_ad_root.add_child(_ad_time)
+	_place(_ad_time, 0, 0.36, 0, 330, 1080, 100)
+	_ad_time.anchor_right = 1.0
+	_ad_time.offset_right = 0
+
+func show_ad(sub: String, seconds: float) -> void:
+	_ad_on = true
+	_ad_root.visible = true
+	_ad_sub.text = sub
+	set_ad_time(seconds)
+
+func set_ad_time(seconds: float) -> void:
+	_ad_time.text = "%.0f" % ceilf(maxf(seconds, 0.0))
+
+func hide_ad() -> void:
+	_ad_on = false
+	_ad_root.visible = false
+
+func ad_visible() -> bool:
+	return _ad_on
 
 func set_menu_button(id: String, text: String, enabled: bool = true) -> void:
 	var b: Button = _menu_buttons[id]
@@ -384,11 +529,11 @@ func set_plane_choice(id: int) -> void:
 ## Is this screen position on the aircraft selector (so a tap there doesn't start the run)?
 func over_selector(pos: Vector2) -> bool:
 	var vs := get_viewport().get_visible_rect().size
-	if _log_on:
+	if _log_on or _hangar_on or _ad_on:
 		return true
 	if not _sel_row.visible:
 		return false
-	return Rect2(0.0, vs.y * 0.52 - 10.0, vs.x, 280.0).has_point(pos) or Rect2(0.0, vs.y * 0.78 - 10.0, vs.x, 300.0).has_point(pos)
+	return Rect2(0.0, vs.y * 0.52 - 10.0, vs.x, 280.0).has_point(pos) or Rect2(0.0, vs.y * 0.78 - 10.0, vs.x, 440.0).has_point(pos)
 
 ## Where the airspeed bar draws its stall mark (the aircraft's stall speed).
 func set_stall(v: float) -> void:
@@ -602,6 +747,7 @@ func show_notice(title: String, body: String, prompt: String, color: Color) -> v
 ## The logbook screen. `stamped` maps airport id -> {"name", "day", "n"}.
 func show_logbook(body: String, stamped: Dictionary) -> void:
 	_log_on = true
+	hide_hangar()
 	_set_overlay(true)
 	_ov_title.text = "LOGBOOK"
 	_ov_title.add_theme_color_override("font_color", Color(0.95, 0.9, 0.7))
@@ -650,8 +796,9 @@ func _set_overlay(on: bool) -> void:
 	overlay_visible = on
 	if not on:
 		hide_logbook()
+		hide_hangar()
 	_sel_row.visible = on and not _splash.visible
-	_menu_row.visible = on and not _splash.visible and not _log_on
+	_menu_row.visible = on and not _splash.visible and not _log_on and not _hangar_on
 	_overlay.visible = on
 	_ov_title.visible = on
 	_ov_body.visible = on
@@ -820,8 +967,10 @@ func begin_prewarm() -> void:
 	_set_overlay(true)
 	_sel_row.visible = true     # (the selector's buttons are drawn behind the splash too)
 	_menu_row.visible = true
-	show_logbook("0123456789 Greaser", {})     # (and the logbook's stamps)
+	show_logbook("0123456789 Greaser", {})     # (and the logbook's stamps, the hangar, an ad)
 	_log_root.visible = true
+	_hangar_root.visible = true
+	_ad_root.visible = true
 	_menu_row.visible = true
 	_ov_title.text = "GREASER"
 	_ov_body.text = "0123456789 Greaser! Smooth Good Firm Hard CRASH Off the runway! Hit the trees!"
@@ -847,6 +996,8 @@ func end_prewarm() -> void:
 	_glow.visible = false
 	_splash.visible = false
 	hide_logbook()
+	hide_hangar()
+	hide_ad()
 	_set_overlay(false)
 	clear_popup()
 	_gust.modulate.a = 0.0
