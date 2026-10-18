@@ -165,6 +165,15 @@ var instrument_dh_ft := 100.0
 var instrument_vis := 22.0
 var instrument_dev_seconds := 2.5
 
+# ---------- Career ----------
+## Practice landings that meet the standard to fill one landing type's proficiency meter.
+var proficiency_needed := 3
+## Landings in a checkride (drawn at random from the rank's types).
+var ride_landings := 3
+## Examiner fee in coins for the checkride to rank r: exam_fee_base x exam_fee_growth ^ (r - 1). Failing loses it.
+var exam_fee_base := 40.0
+var exam_fee_growth := 1.45
+
 # ---------- Rollout ----------
 ## Braking per surface (units/s^2): asphalt, grass, dirt.
 var decel_asphalt := 4.6

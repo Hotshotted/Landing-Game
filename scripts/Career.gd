@@ -1,64 +1,42 @@
 class_name Career
 extends RefCounted
-## The career: six ranks, what each unlocks, and the checkride (a fixed set of landings with standards) that earns the next rank.
+## The career: eight ranks, what each unlocks, and the landing types (with their standards) each rank is trained and tested on.
+## You train for the NEXT rank: its landing types fill proficiency meters through practice landings (see Main), and when every
+## meter is full the instructor endorses you and the checkride for that rank can be booked.
 
-const RANKS: Array[String] = ["STUDENT", "PRIVATE", "INSTRUMENT", "COMMERCIAL", "CFI", "AIRLINE CAPTAIN"]
-## Career points needed before the checkride for rank i (index i) can be taken.
-const POINTS_NEEDED: Array[int] = [0, 300, 900, 2000, 3600, 6000]
+const RANKS: Array[String] = ["STUDENT", "SPORT", "RECREATIONAL", "PRIVATE", "INSTRUMENT", "COMMERCIAL", "CFI", "AIRLINE CAPTAIN"]
 
-## What each rank adds (cumulative: a higher rank has everything below it).
+## Aircraft each rank adds (cumulative).
 const ADDS_PLANES: Array = [
-	[Planes.C172, Planes.CUB], [], [Planes.TWIN], [Planes.GLIDER], [], [Planes.JET]]
-const ADDS_SCENARIOS: Array = [
-	[Scenarios.STANDARD, Scenarios.SHORT_FIELD],
-	[Scenarios.MOUNTAIN, Scenarios.ENGINE_OUT],
-	[Scenarios.NIGHT],
-	[Scenarios.WATER, Scenarios.TRUCK],
-	[],
-	[Scenarios.CARRIER]]
-const ADDS_WEATHER: Array = [
-	[Scenarios.CLEAR],
-	[Scenarios.RAIN],
-	[Scenarios.FOG],
-	[Scenarios.TURBULENCE],
-	[Scenarios.SHEAR],
-	[]]
+	[Planes.CUB], [], [Planes.C172], [], [], [Planes.TWIN], [Planes.GLIDER], [Planes.JET]]
 
-## The checkrides: RIDES[i] earns rank i + 1. Each landing is fixed (scenario, weather, aircraft, seed, difficulty round)
-## with standards: touch down within `zone` of the markers, sink rate under `sink`, no bounce.
-const RIDES: Array[Dictionary] = [
-	{"landings": [
-		{"scn": Scenarios.STANDARD, "wx": Scenarios.CLEAR, "plane": Planes.C172, "seed": 11, "round": 1, "zone": 14.0, "sink": 2.4},
-		{"scn": Scenarios.SHORT_FIELD, "wx": Scenarios.CLEAR, "plane": Planes.C172, "seed": 12, "round": 3, "zone": 14.0, "sink": 2.4},
-		{"scn": Scenarios.STANDARD, "wx": Scenarios.CLEAR, "plane": Planes.CUB, "seed": 13, "round": 2, "zone": 14.0, "sink": 2.4}]},
-	{"landings": [
-		{"scn": Scenarios.ENGINE_OUT, "wx": Scenarios.CLEAR, "plane": Planes.C172, "seed": 21, "round": 3, "zone": 12.0, "sink": 2.2},
-		{"scn": Scenarios.MOUNTAIN, "wx": Scenarios.CLEAR, "plane": Planes.C172, "seed": 22, "round": 3, "zone": 12.0, "sink": 2.2},
-		{"scn": Scenarios.STANDARD, "wx": Scenarios.RAIN, "plane": Planes.C172, "seed": 23, "round": 4, "zone": 12.0, "sink": 2.2},
-		{"scn": Scenarios.SHORT_FIELD, "wx": Scenarios.CLEAR, "plane": Planes.CUB, "seed": 24, "round": 4, "zone": 12.0, "sink": 2.2}]},
-	{"landings": [
-		{"scn": Scenarios.NIGHT, "wx": Scenarios.CLEAR, "plane": Planes.C172, "seed": 31, "round": 4, "zone": 10.0, "sink": 2.0},
-		{"scn": Scenarios.STANDARD, "wx": Scenarios.FOG, "plane": Planes.C172, "seed": 32, "round": 4, "zone": 10.0, "sink": 2.0},
-		{"scn": Scenarios.STANDARD, "wx": Scenarios.CLEAR, "plane": Planes.TWIN, "seed": 33, "round": 5, "zone": 10.0, "sink": 2.0},
-		{"scn": Scenarios.NIGHT, "wx": Scenarios.CLEAR, "plane": Planes.TWIN, "seed": 34, "round": 5, "zone": 10.0, "sink": 2.0}]},
-	{"landings": [
-		{"scn": Scenarios.WATER, "wx": Scenarios.CLEAR, "plane": Planes.C172, "seed": 41, "round": 5, "zone": 14.0, "sink": 1.9},
-		{"scn": Scenarios.TRUCK, "wx": Scenarios.CLEAR, "plane": Planes.CUB, "seed": 42, "round": 5, "zone": 14.0, "sink": 2.4},
-		{"scn": Scenarios.STANDARD, "wx": Scenarios.CLEAR, "plane": Planes.GLIDER, "seed": 43, "round": 5, "zone": 10.0, "sink": 1.9},
-		{"scn": Scenarios.STANDARD, "wx": Scenarios.TURBULENCE, "plane": Planes.C172, "seed": 44, "round": 6, "zone": 10.0, "sink": 1.9}]},
-	{"landings": [
-		{"scn": Scenarios.MOUNTAIN, "wx": Scenarios.FOG, "plane": Planes.C172, "seed": 51, "round": 6, "zone": 10.0, "sink": 2.0},
-		{"scn": Scenarios.STANDARD, "wx": Scenarios.SHEAR, "plane": Planes.C172, "seed": 52, "round": 6, "zone": 8.0, "sink": 1.6},
-		{"scn": Scenarios.ENGINE_OUT, "wx": Scenarios.CLEAR, "plane": Planes.TWIN, "seed": 53, "round": 6, "zone": 8.0, "sink": 1.6},
-		{"scn": Scenarios.NIGHT, "wx": Scenarios.CLEAR, "plane": Planes.TWIN, "seed": 54, "round": 7, "zone": 8.0, "sink": 1.6},
-		{"scn": Scenarios.SHORT_FIELD, "wx": Scenarios.FOG, "plane": Planes.C172, "seed": 55, "round": 7, "zone": 8.0, "sink": 1.6}]},
+## Landing types a rank is trained and tested on (the rank's own list; Student has none: it is where you start).
+const TYPES: Array = [
+	[],
+	[Scenarios.STANDARD, Scenarios.SOFT_FIELD],
+	[Scenarios.STANDARD, Scenarios.SOFT_FIELD, Scenarios.SHORT_FIELD, Scenarios.ENGINE_OUT],
+	[Scenarios.STANDARD, Scenarios.SHORT_FIELD, Scenarios.SOFT_FIELD, Scenarios.ENGINE_OUT, Scenarios.NIGHT],
+	[Scenarios.STANDARD, Scenarios.SHORT_FIELD, Scenarios.SOFT_FIELD, Scenarios.ENGINE_OUT, Scenarios.NIGHT, Scenarios.INSTRUMENT],
+	[Scenarios.STANDARD, Scenarios.SHORT_FIELD, Scenarios.SOFT_FIELD, Scenarios.ENGINE_OUT, Scenarios.NIGHT, Scenarios.INSTRUMENT, Scenarios.POWER_OFF],
+	[Scenarios.STANDARD, Scenarios.SHORT_FIELD, Scenarios.SOFT_FIELD, Scenarios.ENGINE_OUT, Scenarios.NIGHT, Scenarios.INSTRUMENT, Scenarios.POWER_OFF, Scenarios.MOUNTAIN, Scenarios.WATER, Scenarios.TRUCK],
+	[Scenarios.STANDARD, Scenarios.NIGHT, Scenarios.INSTRUMENT, Scenarios.ENGINE_OUT, Scenarios.CARRIER],
 ]
+
+## The special scenarios also open up in free flight from this rank, even when they are not a training type yet.
+const SPECIAL_FROM := {Scenarios.TRUCK: 2, Scenarios.MOUNTAIN: 3, Scenarios.WATER: 5, Scenarios.CARRIER: 7}
+
+## Weather each rank adds.
+const ADDS_WEATHER: Array = [
+	[Scenarios.CLEAR], [], [], [Scenarios.RAIN, Scenarios.TURBULENCE], [Scenarios.FOG], [Scenarios.SHEAR], [], []]
 
 static func rank_name(r: int) -> String:
 	return RANKS[clampi(r, 0, RANKS.size() - 1)]
 
 static func max_rank() -> int:
 	return RANKS.size() - 1
+
+static func tier(rank: int) -> int:
+	return Standards.tier_for_rank(rank)
 
 ## The aircraft / scenarios / weather open at a rank (everything with `unlock_all`).
 static func planes(rank: int, unlock_all: bool = false) -> Array[int]:
@@ -71,9 +49,18 @@ static func planes(rank: int, unlock_all: bool = false) -> Array[int]:
 static func scenarios(rank: int, unlock_all: bool = false) -> Array[int]:
 	var out: Array[int] = []
 	for i in Scenarios.COUNT:
-		if unlock_all or _has(ADDS_SCENARIOS, rank, i):
+		if unlock_all or has_scenario(rank, i):
 			out.append(i)
 	return out
+
+static func has_scenario(rank: int, scn: int) -> bool:
+	if scn == Scenarios.STANDARD:
+		return true          # a Student already lands normally
+	var r := clampi(rank, 0, max_rank())
+	for k in range(0, r + 1):
+		if (TYPES[k] as Array).has(scn):
+			return true
+	return SPECIAL_FROM.has(scn) and r >= int(SPECIAL_FROM[scn])
 
 static func weather(rank: int, unlock_all: bool = false) -> Array[int]:
 	var out: Array[int] = []
@@ -88,49 +75,129 @@ static func _has(table: Array, rank: int, item: int) -> bool:
 			return true
 	return false
 
-## What reaching `rank` unlocks, as text lines ("Aircraft: TWIN", "Scenarios: NIGHT", "Weather: FOG").
-static func unlock_lines(rank: int) -> Array[String]:
-	var out: Array[String] = []
-	var ap: Array = ADDS_PLANES[clampi(rank, 0, ADDS_PLANES.size() - 1)]
-	var asc: Array = ADDS_SCENARIOS[clampi(rank, 0, ADDS_SCENARIOS.size() - 1)]
-	var aw: Array = ADDS_WEATHER[clampi(rank, 0, ADDS_WEATHER.size() - 1)]
-	if not ap.is_empty():
-		out.append("Aircraft: " + ", ".join(ap.map(func(i): return Planes.NAMES[i])))
-	if not asc.is_empty():
-		out.append("Scenarios: " + ", ".join(asc.map(func(i): return Scenarios.NAMES[i].capitalize())))
-	if not aw.is_empty():
-		out.append("Weather: " + ", ".join(aw.map(func(i): return Scenarios.WX_NAMES[i].capitalize())))
+## Landing types the checkride for `target` covers.
+static func types_for(target: int) -> Array[int]:
+	var out: Array[int] = []
+	for v in TYPES[clampi(target, 0, max_rank())]:
+		out.append(int(v))
 	return out
 
-## Career points needed to take the checkride for the next rank (0 at the top).
-static func points_for_next(rank: int) -> int:
-	return POINTS_NEEDED[rank + 1] if rank < max_rank() else 0
+## What reaching `rank` unlocks, as text lines.
+static func unlock_lines(rank: int) -> Array[String]:
+	var out: Array[String] = []
+	var r := clampi(rank, 0, max_rank())
+	if not (ADDS_PLANES[r] as Array).is_empty():
+		out.append("Aircraft: " + ", ".join((ADDS_PLANES[r] as Array).map(func(i): return Planes.NAMES[i])))
+	var fresh: Array[String] = []
+	for t in types_for(r):
+		if r == 0 or not types_for(r - 1).has(t):
+			fresh.append(Scenarios.NAMES[t].capitalize())
+	for scn in SPECIAL_FROM:
+		if int(SPECIAL_FROM[scn]) == r and not types_for(r).has(scn):
+			fresh.append(Scenarios.NAMES[scn].capitalize())
+	if not fresh.is_empty():
+		out.append("Landings: " + ", ".join(fresh))
+	if not (ADDS_WEATHER[r] as Array).is_empty() and r > 0:
+		out.append("Weather: " + ", ".join((ADDS_WEATHER[r] as Array).map(func(i): return Scenarios.WX_NAMES[i].capitalize())))
+	return out
 
-static func eligible(rank: int, points: int) -> bool:
-	return rank < max_rank() and points >= POINTS_NEEDED[rank + 1]
+# ---------- proficiency and the endorsement ----------
 
-## The checkride that earns rank + 1 ({} at the top).
-static func ride_for(rank: int) -> Dictionary:
-	if rank >= max_rank():
-		return {}
-	return RIDES[rank]
+static func needed() -> int:
+	return maxi(int(Tuning.proficiency_needed), 1)
 
-static func standard_lines(entry: Dictionary) -> Array[String]:
-	return ["Touch down within %.0f m of the markers" % float(entry["zone"]), "Sink rate under %.1f" % float(entry["sink"]), "No bounce"]
+static func _prof(data: Dictionary) -> Dictionary:
+	return data["proficiency"]
 
-## Judge one checkride landing. `result` = {sink, offset, bounced}; `crashed` = the approach ended in a crash.
-## Returns {"pass": bool, "fails": Array[String]}.
-static func judge(entry: Dictionary, result: Dictionary, crashed: bool) -> Dictionary:
-	var fails: Array[String] = []
-	if crashed:
-		fails.append("Crashed")
-	else:
-		var off := absf(float(result.get("offset", 999.0)))
-		if off > float(entry["zone"]):
-			fails.append("%.0f m from the markers (limit %.0f)" % [off, float(entry["zone"])])
-		var sink := float(result.get("sink", 99.0))
-		if sink > float(entry["sink"]):
-			fails.append("Sink %.1f (limit %.1f)" % [sink, float(entry["sink"])])
-		if bool(result.get("bounced", false)):
-			fails.append("Bounced")
-	return {"pass": fails.is_empty(), "fails": fails}
+static func count(data: Dictionary, scn: int) -> int:
+	return int((_prof(data)["counts"] as Dictionary).get(str(scn), 0))
+
+## A practice landing that met the standard: one more on that meter (capped).
+static func add_practice(data: Dictionary, scn: int) -> int:
+	var counts: Dictionary = _prof(data)["counts"]
+	counts[str(scn)] = mini(count(data, scn) + 1, needed())
+	return int(counts[str(scn)])
+
+## The types of the rank being trained for whose meter isn't full yet.
+static func missing(data: Dictionary, target: int) -> Array[int]:
+	var out: Array[int] = []
+	for t in types_for(target):
+		if count(data, t) < needed():
+			out.append(t)
+	return out
+
+static func endorsed(data: Dictionary, target: int) -> bool:
+	return target <= max_rank() and not types_for(target).is_empty() and missing(data, target).is_empty()
+
+## A failed checkride: the failed type's meter drops back to half.
+static func drop_half(data: Dictionary, scn: int) -> void:
+	var counts: Dictionary = _prof(data)["counts"]
+	counts[str(scn)] = mini(count(data, scn), needed() / 2)
+
+## The rank changed: meters earned at the same standard tier carry over, others start again.
+static func on_rank_change(data: Dictionary, new_rank: int) -> void:
+	var t := tier(new_rank + 1)
+	if int(_prof(data)["tier"]) != t:
+		_prof(data)["counts"] = {}
+	_prof(data)["tier"] = t
+	# only keep meters for types the new target actually asks for
+	var keep: Dictionary = {}
+	for ty in types_for(new_rank + 1):
+		if (_prof(data)["counts"] as Dictionary).has(str(ty)):
+			keep[str(ty)] = _prof(data)["counts"][str(ty)]
+	_prof(data)["counts"] = keep
+
+# ---------- examiner fee ----------
+
+static func fee(target: int, halved: bool = false) -> int:
+	var f := int(roundf(Tuning.exam_fee_base * pow(Tuning.exam_fee_growth, float(maxi(target - 1, 0)))))
+	return int(ceilf(float(f) * 0.5)) if halved else f
+
+# ---------- drawing a checkride / a practice landing ----------
+
+## `n` distinct landing types drawn at random from the rank's list.
+static func draw(target: int, n: int, rng: RandomNumberGenerator) -> Array[int]:
+	var pool := types_for(target)
+	var out: Array[int] = []
+	while out.size() < n and not pool.is_empty():
+		var i := rng.randi_range(0, pool.size() - 1)
+		out.append(pool[i])
+		pool.remove_at(i)
+	return out
+
+## An aircraft for a landing type: any aircraft the target rank flies that suits the type (the newest is likelier).
+static func pick_plane(scn: int, target: int, rng: RandomNumberGenerator) -> int:
+	var cands: Array[int] = []
+	for p in planes(target):
+		if Planes.offers(p, scn):
+			cands.append(p)
+	if cands.is_empty():
+		for p in Planes.COUNT:
+			if Planes.offers(p, scn):
+				cands.append(p)
+	var weights: Array[float] = []
+	var total := 0.0
+	for p in cands:
+		var w := 1.0 + (2.0 if _has_new(p, target) else 0.0)
+		weights.append(w)
+		total += w
+	var u := rng.randf() * total
+	for i in cands.size():
+		u -= weights[i]
+		if u <= 0.0:
+			return cands[i]
+	return cands[cands.size() - 1]
+
+static func _has_new(plane: int, rank: int) -> bool:
+	return (ADDS_PLANES[clampi(rank, 0, max_rank())] as Array).has(plane)
+
+static func pick_weather(scn: int) -> int:
+	return Scenarios.FOG if scn == Scenarios.INSTRUMENT else Scenarios.CLEAR
+
+## The difficulty round a landing of this rank is flown at.
+static func difficulty_round(target: int) -> int:
+	return clampi(2 + target, 3, 10)
+
+## One landing as the game plays it: {scn, wx, plane, seed, round}.
+static func make_entry(scn: int, target: int, rng: RandomNumberGenerator) -> Dictionary:
+	return {"scn": scn, "wx": pick_weather(scn), "plane": pick_plane(scn, target, rng), "seed": rng.randi() % 1000000 + 1, "round": difficulty_round(target)}

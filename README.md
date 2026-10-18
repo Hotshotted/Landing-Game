@@ -95,3 +95,13 @@ old best-score file; unreadable saves start fresh). `?tune` has Unlock all, Next
   nose off), power-off 180 (power cut abeam the point; within 200 ft), engine out (a forced landing on an unpaved field), instrument
   approach (fog; fly the PAPI glide path to the 100 ft minimums, then the runway appears), plus the special scenarios (mountain strip,
   seaplane, carrier, moving truck). Every landing shows STANDARD MET / MISSED.
+
+## Ranks (career update, part 2)
+
+Eight ranks: Student, Sport, Recreational, Private, Instrument, Commercial, CFI, Airline Captain. Each lists its landing types
+(you train and are tested on the NEXT rank's list, at that rank's standard tier):
+Sport - normal and soft field (light-sport: the Cub, day only); Recreational - adds short field and engine out (and the 172);
+Private - normal, short, soft, engine out, night; Instrument - adds instrument approaches; Commercial - adds the power-off 180, tighter
+tolerances, unlocks the twin; CFI - all the landing types at Commercial standards (adds mountain strip, seaplane, flatbed; the glider);
+Airline Captain - the jet, instrument approaches, the carrier. Weather opens up with the ranks (rain / turbulence at Private, fog at
+Instrument, wind shear at Commercial). The save is version 2: a version 1 save's six ranks move onto the new ladder.

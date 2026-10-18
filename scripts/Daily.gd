@@ -13,12 +13,12 @@ static func for_day(day: int) -> Dictionary:
 	r.seed = day * 7919 + 13
 	var plane: int = PLANES[r.randi_range(0, PLANES.size() - 1)]
 	var scns := Planes.scenarios(plane)
+	var scn: int = scns[r.randi_range(0, scns.size() - 1)]
 	var wxs: Array[int] = []
 	for w in Planes.weather(plane):
-		if w != Scenarios.CLEAR:
+		if w != Scenarios.CLEAR and Scenarios.combo_ok(scn, w):
 			wxs.append(w)
-	var scn: int = scns[r.randi_range(0, scns.size() - 1)]
-	var wx: int = wxs[r.randi_range(0, wxs.size() - 1)]
+	var wx: int = Scenarios.FOG if (scn == Scenarios.INSTRUMENT or wxs.is_empty()) else wxs[r.randi_range(0, wxs.size() - 1)]
 	return {"day": day, "plane": plane, "scn": scn, "wx": wx, "seed": r.randi() % 1000000, "round": Tuning.daily_round}
 
 ## "Fri 18 Oct" style label for a day number.

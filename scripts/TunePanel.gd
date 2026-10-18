@@ -11,7 +11,7 @@ extends Node
 signal changed(property: String)
 ## "Next round" pressed.
 signal skip_round
-signal debug_action(id: String)      # career debug: unlock_all, plane, reset_save, checkride
+signal debug_action(id: String)      # career debug: unlock_all, plane, reset_save, promote, coins
 
 ## [Tuning property, label, min, max, step]
 const ENTRIES := [
@@ -251,9 +251,9 @@ func build() -> void:
 	var plane_btn := _make_button("Next aircraft", 28)
 	plane_btn.set_meta("debug", "plane")
 	plane_btn.pressed.connect(func(): debug_action.emit("plane"))
-	var ride_btn := _make_button("Checkride", 28)
-	ride_btn.set_meta("debug", "checkride")
-	ride_btn.pressed.connect(func(): debug_action.emit("checkride"); close())
+	var ride_btn := _make_button("Promote rank", 28)
+	ride_btn.set_meta("debug", "promote")
+	ride_btn.pressed.connect(func(): debug_action.emit("promote"))
 	var wipe_btn := _make_button("Reset save", 28)
 	wipe_btn.set_meta("debug", "reset_save")
 	wipe_btn.pressed.connect(func():

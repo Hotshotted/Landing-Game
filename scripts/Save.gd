@@ -4,10 +4,13 @@ extends RefCounted
 ## points, logbook totals, airport stamps and checkride records. Tests switch the file off (`enabled = false`) and work on the
 ## in-memory `data`; `to_text()` / `load_text()` let them check the round trip and the migrations.
 ##
-## Versions: 0 = the old best-score-only file (user://greaser.cfg); 1 = this document. A document from a NEWER build is
+## Versions: 0 = the old best-score-only file (user://greaser.cfg); 1 = the first JSON document (six ranks, career points);
+## 2 = this one (eight ranks, proficiency meters, pink slips). A document from a NEWER build is
 ## kept as it is (unknown keys survive), and anything unreadable falls back to a fresh save instead of crashing.
 
-const VERSION := 1
+const VERSION := 2
+## Version 1 had six ranks (Student, Private, Instrument, Commercial, CFI, Airline); where they sit on the eight-rank ladder.
+const RANK_MAP_V1: Array[int] = [0, 3, 4, 5, 6, 7]
 const OLD_PATH := "user://greaser.cfg"
 
 static var enabled := true
@@ -19,14 +22,16 @@ static func default_data() -> Dictionary:
 		"version": VERSION,
 		"best": 0,               # best run score
 		"best_streak": 0,        # best Greaser streak
-		"career_points": 0,      # lifetime landing points: they open the checkrides
-		"rank": 0,               # 0 Student .. 5 Airline Captain
+		"rank": 0,               # 0 Student .. 7 Airline Captain (see Career.RANKS)
 		"landings": 0,
 		"crashes": 0,
 		"flight_seconds": 0.0,
 		"grades": [0, 0, 0, 0, 0],   # landings per grade: Greaser! / Smooth / Good / Firm / Hard
 		"airports": {},          # airport id -> {"name": String, "day": int (first visit, days since 1970), "n": landings}
 		"checkrides": {},        # target rank (as text) -> {"passes": int, "attempts": int}
+		"proficiency": {"tier": 0, "counts": {}},   # practice landings that met the standard, per landing type (scenario id as text)
+		"pink_slips": [],        # failed checkrides, for good: {"day": int, "rank": int (the rank tried for), "type": int (the failed landing type)}
+		"fee_halved": false,     # the rewarded ad: the next examiner fee is halved
 		"plane": 1,              # the aircraft last flown
 		"unlock_all": false,     # ?tune debug: every rank, aircraft and scenario open
 		"coins": 0,              # spent on paint and pilot gear
@@ -77,9 +82,17 @@ static func migrate(d: Dictionary) -> Dictionary:
 	var v := int(d.get("version", 0))
 	for k in d:
 		out[k] = d[k]
-	for k in ["best", "best_streak", "career_points", "rank", "landings", "crashes", "plane", "coins", "paint", "gear"]:
+	for k in ["best", "best_streak", "rank", "landings", "crashes", "plane", "coins", "paint", "gear"]:
 		out[k] = int(d.get(k, out[k]))
-	out["rank"] = clampi(int(out["rank"]), 0, 5)
+	out.erase("career_points")
+	if v < 2:
+		out["rank"] = RANK_MAP_V1[clampi(int(d.get("rank", 0)), 0, RANK_MAP_V1.size() - 1)]
+		var old_cr: Dictionary = d.get("checkrides", {}) if d.get("checkrides", {}) is Dictionary else {}
+		var new_cr: Dictionary = {}
+		for k in old_cr:
+			new_cr[str(RANK_MAP_V1[clampi(int(k), 0, RANK_MAP_V1.size() - 1)])] = old_cr[k]
+		out["checkrides"] = new_cr
+	out["rank"] = clampi(int(out["rank"]), 0, 7)
 	out["plane"] = clampi(int(out["plane"]), 0, 4)
 	out["flight_seconds"] = float(d.get("flight_seconds", 0.0))
 	var g: Array = [0, 0, 0, 0, 0]
@@ -89,9 +102,28 @@ static func migrate(d: Dictionary) -> Dictionary:
 			g[i] = int((gin as Array)[i])
 	out["grades"] = g
 	for k in ["airports", "checkrides"]:
+		if k == "checkrides" and v < 2:
+			continue          # (already mapped to the new ladder above)
 		var dv = d.get(k, {})
 		out[k] = dv if dv is Dictionary else {}
 	out["unlock_all"] = bool(d.get("unlock_all", false))
+	out["fee_halved"] = bool(d.get("fee_halved", false))
+	var pf: Dictionary = {"tier": 0, "counts": {}}
+	var pin = d.get("proficiency", {})
+	if pin is Dictionary:
+		pf["tier"] = int((pin as Dictionary).get("tier", 0))
+		var cin = (pin as Dictionary).get("counts", {})
+		if cin is Dictionary:
+			for k in cin:
+				pf["counts"][str(k)] = maxi(int(cin[k]), 0)
+	out["proficiency"] = pf
+	var slips: Array = []
+	var sin = d.get("pink_slips", [])
+	if sin is Array:
+		for it in sin:
+			if it is Dictionary:
+				slips.append({"day": int(it.get("day", 0)), "rank": int(it.get("rank", 1)), "type": int(it.get("type", 0))})
+	out["pink_slips"] = slips
 	for k in ["owned_paint", "owned_gear"]:
 		var own: Array = [0]
 		var oin = d.get(k, own)
@@ -146,3 +178,7 @@ static func record_checkride(to_rank: int, passed: bool) -> void:
 	if passed:
 		rec["passes"] = int(rec["passes"]) + 1
 	cr[key] = rec
+
+## A failed checkride goes in the logbook for good.
+static func add_slip(day: int, rank: int, type: int) -> void:
+	(data["pink_slips"] as Array).append({"day": day, "rank": rank, "type": type})

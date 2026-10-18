@@ -27,6 +27,7 @@ var mode := FREE
 var ride_target := 0            # checkride: the rank it earns
 var ride_idx := 0               # checkride: which landing (0-based)
 var ride_fails: Array[String] = []
+var ride_draw: Array[Dictionary] = []     # the checkride's landings, drawn when it is booked: {scn, wx, plane, seed, round}
 var ride_passed := false        # the finished checkride was passed
 var _apt_rng := RandomNumberGenerator.new()   # picks the airport name (its own stream, so the approach itself is unaffected)
 var airport_idx := 0            # which named airport of this scenario this approach is at
@@ -313,7 +314,7 @@ func _begin_round(card: bool = true) -> void:
 	if mode == DAILY:
 		hud.set_round_text("DAILY APPROACH")
 	elif mode == RIDE:
-		hud.set_round_text("CHECKRIDE %d/%d" % [ride_idx + 1, Career.ride_for(ride_target - 1)["landings"].size()])
+		hud.set_round_text("CHECKRIDE %d/%d" % [ride_idx + 1, ride_draw.size()])
 	else:
 		hud.set_round(round_no)
 	hud.set_runway("%s  %d FT  %s" % [Airfield.SURFACE_NAMES[airfield.surface].to_upper(), int(roundf(Units.ft(airfield.rwy_len) / 50.0)) * 50, _terrain_text()])
@@ -725,7 +726,6 @@ func _touchdown() -> void:
 		last_result["bounced"] = bounced
 		var g0: int = last_result["grade"]
 		var had_streak := streak
-		var had_eligible := Career.eligible(int(Save.data["rank"]), int(Save.data["career_points"]))
 		if g0 == 0:
 			streak = mini(streak + 1, Tuning.streak_cap)     # a Greaser! extends the streak
 		elif g0 >= 3:
@@ -759,8 +759,6 @@ func _touchdown() -> void:
 		hud.set_hint("")
 		if g <= 1:
 			sfx.play(Sfx.CHIME, 1.0 + 0.12 * float(1 - g), -6.0)
-		if mode != RIDE and Save.data["rank"] < Career.max_rank() and Career.eligible(int(Save.data["rank"]), int(Save.data["career_points"])) and had_eligible == false:
-			hud.flash_warning("CHECKRIDE READY!", Color(0.5, 1.0, 0.6))
 	var power := clampf(0.25 + sink / 5.0, 0.2, 1.0)
 	fx.smoke(wheels, power, airfield.smoke_color())
 	sfx.play(Sfx.SQUEAK, rng.randf_range(0.9, 1.15), -4.0 + minf(sink, 4.0))
@@ -796,8 +794,6 @@ func _crash(reason: String) -> void:
 	if _awarded > 0:
 		landings -= 1
 		hud.set_score(score)
-		if mode == FREE:
-			Save.add("career_points", -_awarded)
 	if _coins_award > 0:
 		Save.add("coins", -_coins_award)
 		run_coins -= _coins_award
@@ -838,7 +834,7 @@ func _finish_round(over: bool) -> void:
 			over = true
 		else:
 			ride_idx += 1
-			over = ride_idx >= Career.ride_for(ride_target - 1)["landings"].size()
+			over = ride_idx >= ride_draw.size()
 	Save.add("flight_seconds", _flight_acc)
 	_flight_acc = 0.0
 	Save.store()
@@ -1013,31 +1009,71 @@ func _input(event: InputEvent) -> void:
 			_paused_total_ms = 0
 			_continue_from_over()
 
-# ---------- career: ranks, checkrides, logbook ----------
+# ---------- career: ranks, practice, checkrides, logbook ----------
+
+## The rank being trained for (the checkride the endorsement opens).
+func career_target() -> int:
+	return mini(int(Save.data["rank"]) + 1, Career.max_rank())
+
+func _types_text(types: Array[int]) -> String:
+	var names: Array[String] = []
+	for t in types:
+		names.append(Scenarios.NAMES[t].capitalize())
+	return ", ".join(names)
 
 func _career_text() -> String:
 	var rank := int(Save.data["rank"])
 	var t := "%s PILOT\n" % Career.rank_name(rank)
 	if rank < Career.max_rank():
-		var need := Career.points_for_next(rank)
-		var pts := int(Save.data["career_points"])
-		if pts >= need:
-			t += "Checkride ready: %s\n" % Career.rank_name(rank + 1)
+		var tgt := career_target()
+		var ready := Career.types_for(tgt).size() - Career.missing(Save.data, tgt).size()
+		if Career.endorsed(Save.data, tgt):
+			t += "Endorsed for the %s checkride\n" % Career.rank_name(tgt)
 		else:
-			t += "%d / %d points to the %s checkride\n" % [pts, need, Career.rank_name(rank + 1)]
+			t += "Training for %s: %d / %d landing types ready\n" % [Career.rank_name(tgt), ready, Career.types_for(tgt).size()]
+	else:
+		t += "Every rating earned\n"
 	t += "Coins  %d\n\n" % int(Save.data["coins"])
 	return t
 
-func can_take_checkride() -> bool:
+## What the career screen shows (see Hud.show_career).
+func career_info() -> Dictionary:
 	var rank := int(Save.data["rank"])
-	return rank < Career.max_rank() and (Career.eligible(rank, int(Save.data["career_points"])) or bool(Save.data["unlock_all"]))
+	var tgt := career_target()
+	var top := rank >= Career.max_rank()
+	var types := Career.types_for(tgt) if not top else Career.types_for(Career.max_rank())
+	var endorsed := (not top) and Career.endorsed(Save.data, tgt)
+	var rows: Array[Dictionary] = []
+	for ty in types:
+		rows.append({"name": Scenarios.NAMES[ty].capitalize(), "count": Career.count(Save.data, ty) if not top else Career.needed(), "needed": Career.needed(), "type": ty})
+	var speech := ""
+	var status := ""
+	var book_text := "BOOK CHECKRIDE"
+	var can_book := false
+	if top:
+		speech = "\"Captain on the flight deck. There is nothing left to examine you on - but the instructor will never stop you flying.\""
+		status = "Airline Captain: the top of the ladder"
+		book_text = "ALL RATINGS EARNED"
+	else:
+		var miss := Career.missing(Save.data, tgt)
+		var fee := Career.fee(tgt, bool(Save.data["fee_halved"]))
+		if endorsed:
+			speech = "\"Well flown, Whiskers. I've signed your endorsement for the %s checkride. The examiner will draw %d landing types.\"" % [Career.rank_name(tgt), mini(int(Tuning.ride_landings), types.size())]
+			status = "Examiner fee  %d coins%s    You have  %d" % [fee, " (halved!)" if bool(Save.data["fee_halved"]) else "", int(Save.data["coins"])]
+			book_text = "BOOK CHECKRIDE   %d COINS" % fee
+			can_book = int(Save.data["coins"]) >= fee
+		else:
+			speech = "\"Practise each landing to the %s standard %d times. Still to do: %s.\"" % [Career.rank_name(tgt), Career.needed(), _types_text(miss)]
+			status = "Training for %s  -  %s" % [Career.rank_name(tgt), " / ".join(Career.unlock_lines(tgt))]
+			book_text = "BOOK CHECKRIDE   %d COINS" % fee
+	return {"body": "%s PILOT" % Career.rank_name(rank), "speech": speech, "endorsed": endorsed, "status": status, "rows": rows,
+		"practice": CAREER_PRACTICE, "book_text": book_text, "book": can_book and CAREER_BOOKING}
+
+const CAREER_PRACTICE := false      # (switched on by the practice landings)
+const CAREER_BOOKING := false       # (switched on by the checkrides)
 
 func _refresh_menu_buttons() -> void:
-	var rank := int(Save.data["rank"])
-	if rank >= Career.max_rank():
-		hud.set_menu_button("ride", "ALL RANKS", false)
-	else:
-		hud.set_menu_button("ride", "CHECKRIDE", can_take_checkride())
+	hud.set_menu_button("career", "CAREER")
 	var dl: Dictionary = Save.data["daily"]
 	var today := Daily.day_number(Time.get_unix_time_from_system())
 	hud.set_menu_button("daily", "DAILY  %d" % int(dl["best"]) if int(dl["day"]) == today and int(dl["best"]) > 0 else "DAILY")
@@ -1050,13 +1086,10 @@ func _on_menu_action(id: String) -> void:
 			_run_start_ms = Time.get_ticks_msec()
 			_paused_total_ms = 0
 			start_run()
-		"ride":
-			if can_take_checkride():
-				_run_start_ms = Time.get_ticks_msec()
-				_paused_total_ms = 0
-				start_checkride()
+		"career":
+			hud.show_career(career_info())
 		"logbook":
-			hud.show_logbook(logbook_text(), Save.data["airports"])
+			hud.show_logbook(logbook_text(), Save.data["airports"], _slips_for_logbook())
 		"daily":
 			_run_start_ms = Time.get_ticks_msec()
 			_paused_total_ms = 0
@@ -1068,6 +1101,7 @@ func _on_menu_action(id: String) -> void:
 		"back":
 			hud.hide_logbook()
 			hud.hide_hangar()
+			hud.hide_career()
 			if state == MENU:
 				_show_menu()
 			else:
@@ -1077,87 +1111,49 @@ func logbook_text() -> String:
 	var g: Array = Save.data["grades"]
 	var secs := float(Save.data["flight_seconds"])
 	var rank := int(Save.data["rank"])
-	return "%s PILOT\nFlight time  %d:%02d h    Landings  %d    Crashes  %d\nGreaser! %d   Smooth %d   Good %d\nFirm %d   Hard %d\nBest run  %d    Best streak  x%d\nAirports stamped  %d / %d" % [
+	return "%s PILOT\nFlight time  %d:%02d h    Landings  %d    Crashes  %d\nGreaser! %d   Smooth %d   Good %d   Firm %d   Hard %d\nBest run  %d    Best streak  x%d\nAirports stamped  %d / %d" % [
 		Career.rank_name(rank), int(secs / 3600.0), int(secs / 60.0) % 60, int(Save.data["landings"]), int(Save.data["crashes"]),
 		int(g[0]), int(g[1]), int(g[2]), int(g[3]), int(g[4]), int(Save.data["best"]), int(Save.data["best_streak"]),
 		(Save.data["airports"] as Dictionary).size(), Airports.count()]
 
+func date_text(day: int) -> String:
+	var d := Time.get_datetime_dict_from_unix_time(day * 86400)
+	return "%d/%d/%d" % [d["day"], d["month"], d["year"]]
+
+## The pink slips as the logbook shows them: [{date, rank, type}] oldest first.
+func _slips_for_logbook() -> Array:
+	var out: Array = []
+	for sl in Save.data["pink_slips"]:
+		out.append({"date": date_text(int(sl["day"])), "rank": Career.rank_name(int(sl["rank"])), "type": Scenarios.NAMES[int(sl["type"])].capitalize()})
+	return out
+
 func _ride_entry() -> Dictionary:
-	var ride := Career.ride_for(ride_target - 1)
-	return ride["landings"][clampi(ride_idx, 0, ride["landings"].size() - 1)]
+	return ride_draw[clampi(ride_idx, 0, maxi(ride_draw.size() - 1, 0))] if not ride_draw.is_empty() else {}
 
-## Take the checkride that earns `ride_target` (the next rank): a fixed set of landings, every one to standard.
-func start_checkride() -> void:
-	mode = RIDE
-	_over_kind = "ride"
-	ride_target = int(Save.data["rank"]) + 1
-	ride_idx = 0
-	ride_fails.clear()
-	ride_passed = false
-	_ride_retry_used = false
-	hud.set_ad_button("", false)
-	_saved_plane = plane_id
-	score = 0
-	strikes = 0
-	landings = 0
-	last_result = {}
-	last_crash = ""
-	sim_time = 0.0
-	streak = 0
-	best_streak = 0
-	hud.set_streak(0)
-	hud.hide_overlay()
-	hud.clear_popup()
-	hud.set_score(0)
-	hud.set_strikes(0, 1)
-	hud.set_fade_now(0.0)
-	fx.clear()
-	get_tree().paused = false
-	_begin_round()
-	_snap_camera()
+## What the over / result screen is showing, so BACK from a sub-screen can put it back.
+var _notice: Dictionary = {}
 
-func _show_ride_result() -> void:
-	var rec_rank := ride_target
-	hud.fade_to(0.0)
-	hud.clear_popup()
-	select_plane(_saved_plane, false)
-	if ride_fails.is_empty():
-		ride_passed = true
-		_over_kind = "ride_pass"
-		Save.record_checkride(rec_rank, true)
-		Save.data["rank"] = rec_rank
-		var lines := Career.unlock_lines(rec_rank)
-		hud.show_notice("%s!" % Career.rank_name(rec_rank), "Checkride passed.\n\n" + "\n".join(lines), "TAP TO CONTINUE", Color(0.55, 1.0, 0.6))
-		sfx.play(Sfx.CHIME, 1.3, 0.0)
-	else:
-		ride_passed = false
-		_over_kind = "ride_fail"
-		Save.record_checkride(rec_rank, false)
-		hud.show_notice("CHECKRIDE FAILED", "Landing %d of %d\n\n%s" % [ride_idx + 1, Career.ride_for(rec_rank - 1)["landings"].size(), "\n".join(ride_fails)], "TAP TO RETRY", Color(1.0, 0.45, 0.35))
-	Save.store()
-	_refresh_menu_buttons()
-	hud.set_menu_button("ride", "RETRY" if not ride_passed else "CHECKRIDE", can_take_checkride())
-	_refresh_ad_button()
+func _show_notice(title: String, body: String, prompt: String, color: Color) -> void:
+	_notice = {"title": title, "body": body, "prompt": prompt, "color": color}
+	hud.show_notice(title, body, prompt, color)
+
+func _show_ride_result() -> void:      # (the checkride debrief: written with the checkrides)
+	_show_menu()
 
 func _redraw_over() -> void:
-	match _over_kind:
-		"run":
-			hud.show_over(score, best, landings, false, best_streak)
-		_:
-			_show_ride_result_again()
-
-func _show_ride_result_again() -> void:
-	if ride_passed:
-		hud.show_notice("%s!" % Career.rank_name(ride_target), "Checkride passed.\n\n" + "\n".join(Career.unlock_lines(ride_target)), "TAP TO CONTINUE", Color(0.55, 1.0, 0.6))
-	else:
-		hud.show_notice("CHECKRIDE FAILED", "\n".join(ride_fails), "TAP TO RETRY", Color(1.0, 0.45, 0.35))
+	if _over_kind == "run":
+		hud.show_over(score, best, landings, false, best_streak)
+	elif not _notice.is_empty():
+		hud.show_notice(_notice["title"], _notice["body"], _notice["prompt"], _notice["color"])
+	_refresh_ad_button()
 
 func _continue_from_over() -> void:
 	match _over_kind:
-		"ride_fail":
-			start_checkride()
-		"ride_pass", "daily":
+		"daily":
 			_show_menu()
+		"practice":
+			_show_menu()
+			hud.show_career(career_info())
 		_:
 			start_run()
 
@@ -1166,7 +1162,6 @@ func _record_landing(grade: int) -> void:
 	Save.add("landings", 1)
 	Save.add_grade(grade)
 	if mode == FREE:
-		Save.add("career_points", _awarded)
 		Ads.note_round()
 	_coins_award = 0
 	if mode != RIDE:
@@ -1184,6 +1179,16 @@ func debug_unlock_all(on: bool) -> void:
 	Save.store()
 	hud.set_plane_choice(plane_id)
 	_refresh_menu_buttons()
+
+func debug_promote() -> void:
+	var r := mini(int(Save.data["rank"]) + 1, Career.max_rank())
+	Save.data["rank"] = r
+	Career.on_rank_change(Save.data, r)
+	Save.store()
+	select_plane(plane_id)
+	_refresh_menu_buttons()
+	if state == MENU:
+		_show_menu()
 
 func debug_coins() -> void:
 	Save.add("coins", 500)
@@ -1213,11 +1218,8 @@ func _on_debug_action(id: String) -> void:
 			debug_reset_save()
 		"coins":
 			debug_coins()
-		"checkride":
-			if state == MENU or state == OVER:
-				ride_target = int(Save.data["rank"]) + 1
-				if ride_target <= Career.max_rank():
-					start_checkride()
+		"promote":
+			debug_promote()
 
 # ---------- daily approach ----------
 
@@ -1266,7 +1268,7 @@ func _show_daily_result() -> void:
 	hud.clear_popup()
 	var e := Daily.for_day(_daily_day)
 	var what := "%s, %s, %s" % [Planes.NAMES[e["plane"]], Scenarios.NAMES[e["scn"]].capitalize(), Scenarios.WX_NAMES[e["wx"]].capitalize()]
-	hud.show_notice("DAILY APPROACH", "%s\n%s\n\nScore  %d\n%s\nAttempts today  %d" % [Daily.label(_daily_day), what, score, "NEW BEST!" if new_best else "Best  %d" % int(dl["best"]), int(dl["tries"])], "TAP FOR MENU", Color(1.0, 0.8, 0.35))
+	_show_notice("DAILY APPROACH", "%s\n%s\n\nScore  %d\n%s\nAttempts today  %d" % [Daily.label(_daily_day), what, score, "NEW BEST!" if new_best else "Best  %d" % int(dl["best"]), int(dl["tries"])], "TAP FOR MENU", Color(1.0, 0.8, 0.35))
 	hud.set_ad_button("", false)
 
 # ---------- cosmetics ----------

@@ -36,8 +36,30 @@ var _log_root: Control
 var _log_stamps: Array[Panel] = []
 var _log_stamp_names: Array[Label] = []
 var _log_back: Button
+var _log_slips: Array[Panel] = []
+var _log_slip_labels: Array[Label] = []
+var _log_more: Label
+const MAX_SLIPS := 4
 var _log_on := false
 const STAMP_COLS := 3
+const MAX_TYPE_ROWS := 10
+const MAX_PIPS := 5
+var _career_root: Control
+var _cr_rows: Array[Dictionary] = []     # {name: Label, pips: Array[ColorRect], btn: Button}
+var _cr_speech: Label
+var _cr_speech_panel: Panel
+var _cr_status: Label
+var _cr_book: Button
+var _cr_stamp: Label                     # the endorsement stamp on the speech panel
+var _cr_on := false
+var _instr_nodes: Array[Control] = []    # the instructor portrait (on the career screen)
+var _cert_root: Control
+var _cert_title: Label
+var _cert_rank: Label
+var _cert_body: Label
+var _cert_date: Label
+var _cert_sign: Label
+var _cert_on := false
 signal hangar_pick(kind: String, idx: int)
 var _hangar_root: Control
 var _hangar_paint: Array[Button] = []
@@ -259,6 +281,8 @@ func _ready() -> void:
 	_build_menu_buttons()
 	_build_logbook()
 	_build_hangar()
+	_build_career()
+	_build_certificate()
 	_build_ad()
 	# menu / game-over overlay
 	_overlay = ColorRect.new()
@@ -307,6 +331,8 @@ func _ready() -> void:
 	move_child(_menu_row, _splash.get_index())
 	move_child(_log_root, _splash.get_index())
 	move_child(_hangar_root, _splash.get_index())
+	move_child(_career_root, _splash.get_index())
+	move_child(_cert_root, _splash.get_index())
 	move_child(_ad_root, _splash.get_index())
 	move_child(_stamp, get_child_count() - 1)
 
@@ -317,8 +343,8 @@ func _build_menu_buttons() -> void:
 	_menu_row.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_menu_row.visible = false
 	add_child(_menu_row)
-	var ids := ["fly", "ride", "logbook"]
-	var texts := ["FLY", "CHECKRIDE", "LOGBOOK"]
+	var ids := ["fly", "career", "logbook"]
+	var texts := ["FLY", "CAREER", "LOGBOOK"]
 	for i in ids.size():
 		var b := Button.new()
 		b.text = texts[i]
@@ -353,6 +379,216 @@ func set_ad_button(text: String, shown: bool) -> void:
 	var b: Button = _menu_buttons["ad"]
 	b.text = text
 	b.visible = shown
+
+## A flat coloured rounded box (portraits, certificate, meters).
+func _box(parent: Control, x: float, y: float, w: float, h: float, color: Color, radius: int = 0, border: Color = Color(0, 0, 0, 0), border_w: int = 0) -> Panel:
+	var p := Panel.new()
+	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var st := StyleBoxFlat.new()
+	st.bg_color = color
+	st.set_corner_radius_all(radius)
+	if border_w > 0:
+		st.set_border_width_all(border_w)
+		st.border_color = border
+	p.add_theme_stylebox_override("panel", st)
+	parent.add_child(p)
+	_place(p, 0, 0, x, y, w, h)
+	return p
+
+## The instructor, Captain Wiggins: a simple flat portrait (a uniform, a face, a cap and a moustache).
+func _build_instructor(parent: Control, x: float, y: float, size: float) -> Array[Control]:
+	var k := size / 200.0
+	var out: Array[Control] = []
+	out.append(_box(parent, x + 25 * k, y + 120 * k, 150 * k, 80 * k, Color(0.16, 0.24, 0.45), int(30 * k)))     # uniform
+	out.append(_box(parent, x + 85 * k, y + 120 * k, 30 * k, 60 * k, Color(0.95, 0.95, 0.95), int(6 * k)))      # shirt
+	out.append(_box(parent, x + 97 * k, y + 125 * k, 6 * k, 55 * k, Color(0.8, 0.2, 0.2)))                       # tie
+	out.append(_box(parent, x + 55 * k, y + 40 * k, 90 * k, 90 * k, Color(0.95, 0.78, 0.62), int(40 * k)))      # face
+	out.append(_box(parent, x + 48 * k, y + 14 * k, 104 * k, 40 * k, Color(0.12, 0.18, 0.36), int(14 * k)))     # cap
+	out.append(_box(parent, x + 40 * k, y + 46 * k, 120 * k, 12 * k, Color(0.08, 0.12, 0.26), int(6 * k)))      # brim
+	out.append(_box(parent, x + 90 * k, y + 22 * k, 20 * k, 16 * k, Color(0.95, 0.8, 0.25), int(4 * k)))        # badge
+	out.append(_box(parent, x + 72 * k, y + 78 * k, 12 * k, 12 * k, Color(0.1, 0.1, 0.12), int(6 * k)))         # eyes
+	out.append(_box(parent, x + 116 * k, y + 78 * k, 12 * k, 12 * k, Color(0.1, 0.1, 0.12), int(6 * k)))
+	out.append(_box(parent, x + 70 * k, y + 98 * k, 60 * k, 14 * k, Color(0.35, 0.25, 0.2), int(7 * k)))        # moustache
+	return out
+
+## The career screen: the instructor with a speech panel (or the endorsement), one row per landing type of the rank being
+## trained for (name, proficiency pips, PRACTICE) and the BOOK CHECKRIDE button. Built once.
+func _build_career() -> void:
+	_career_root = Control.new()
+	_career_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_career_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_career_root.visible = false
+	add_child(_career_root)
+	_instr_nodes = _build_instructor(_career_root, 30.0, 470.0, 230.0)
+	_cr_speech_panel = _box(_career_root, 285, 480, 765, 215, Color(0.97, 0.94, 0.85, 0.96), 16, Color(0.5, 0.4, 0.25), 4)
+	_cr_speech = _label(34, HORIZONTAL_ALIGNMENT_LEFT)
+	remove_child(_cr_speech)
+	_cr_speech_panel.add_child(_cr_speech)
+	_cr_speech.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_cr_speech.offset_left = 20
+	_cr_speech.offset_right = -20
+	_cr_speech.offset_top = 10
+	_cr_speech.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_cr_speech.add_theme_color_override("font_color", Color(0.15, 0.12, 0.08))
+	_cr_speech.add_theme_color_override("font_outline_color", Color(0.97, 0.94, 0.85, 0.0))
+	_cr_stamp = _label(40, HORIZONTAL_ALIGNMENT_RIGHT)
+	remove_child(_cr_stamp)
+	_cr_speech_panel.add_child(_cr_stamp)
+	_cr_stamp.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
+	_cr_stamp.offset_left = -420
+	_cr_stamp.offset_top = -58
+	_cr_stamp.offset_right = -20
+	_cr_stamp.offset_bottom = -8
+	_cr_stamp.add_theme_color_override("font_color", Color(0.1, 0.45, 0.2))
+	_cr_stamp.add_theme_color_override("font_outline_color", Color(1, 1, 1, 0.0))
+	_cr_status = _label(30, HORIZONTAL_ALIGNMENT_CENTER)
+	remove_child(_cr_status)
+	_career_root.add_child(_cr_status)
+	_place(_cr_status, 0, 0, 30, 715, 1020, 50)
+	for i in MAX_TYPE_ROWS:
+		var y := 780.0 + float(i) * 86.0
+		var row := {}
+		var nm := _label(36, HORIZONTAL_ALIGNMENT_LEFT)
+		remove_child(nm)
+		_career_root.add_child(nm)
+		_place(nm, 0, 0, 30, y, 470, 70)
+		nm.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		row["name"] = nm
+		var pips: Array[ColorRect] = []
+		for k in MAX_PIPS:
+			var pip := ColorRect.new()
+			pip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			_career_root.add_child(pip)
+			_place(pip, 0, 0, 515.0 + float(k) * 46.0, y + 15.0, 36, 40)
+			pips.append(pip)
+		row["pips"] = pips
+		var b := Button.new()
+		b.text = "PRACTICE"
+		b.add_theme_font_size_override("font_size", 32)
+		var idx := i
+		b.pressed.connect(func(): menu_action.emit("practice:%d" % idx))
+		_career_root.add_child(b)
+		_place(b, 0, 0, 770, y, 280, 70)
+		row["btn"] = b
+		_cr_rows.append(row)
+	_cr_book = Button.new()
+	_cr_book.add_theme_font_size_override("font_size", 38)
+	_cr_book.pressed.connect(func(): menu_action.emit("book"))
+	_career_root.add_child(_cr_book)
+	_place(_cr_book, 0, 0, 30, 1700, 700, 120)
+	var back := Button.new()
+	back.text = "BACK"
+	back.add_theme_font_size_override("font_size", 48)
+	back.pressed.connect(func(): menu_action.emit("back"))
+	_career_root.add_child(back)
+	_place(back, 0, 0, 750, 1700, 300, 120)
+
+## `info`: {title, body, speech, endorsed (bool), status, rows: [{name, count, needed}], practice (bool), book_text, book (bool)}
+func show_career(info: Dictionary) -> void:
+	_cr_on = true
+	hide_logbook()
+	hide_hangar()
+	_set_overlay(true)
+	_ov_title.text = "CAREER"
+	_ov_title.add_theme_color_override("font_color", Color(0.75, 0.9, 1.0))
+	_ov_title.add_theme_font_size_override("font_size", 110)
+	_ov_body.text = str(info["body"])
+	_ov_prompt.text = ""
+	_cr_speech.text = str(info["speech"])
+	_cr_stamp.text = "ENDORSED" if bool(info["endorsed"]) else ""
+	var sp: StyleBoxFlat = _cr_speech_panel.get_theme_stylebox("panel")
+	sp.border_color = Color(0.2, 0.6, 0.3) if bool(info["endorsed"]) else Color(0.5, 0.4, 0.25)
+	_cr_status.text = str(info["status"])
+	var rows: Array = info["rows"]
+	for i in MAX_TYPE_ROWS:
+		var row: Dictionary = _cr_rows[i]
+		var on := i < rows.size()
+		(row["name"] as Label).visible = on
+		(row["btn"] as Button).visible = on
+		for pip in row["pips"]:
+			(pip as ColorRect).visible = false
+		if not on:
+			continue
+		var r: Dictionary = rows[i]
+		(row["name"] as Label).text = str(r["name"])
+		(row["btn"] as Button).disabled = not bool(info["practice"])
+		var needed := mini(int(r["needed"]), MAX_PIPS)
+		for k in needed:
+			var pip: ColorRect = row["pips"][k]
+			pip.visible = true
+			pip.color = Color(0.4, 0.95, 0.5) if k < int(r["count"]) else Color(0.2, 0.24, 0.3, 0.9)
+	_cr_book.text = str(info["book_text"])
+	_cr_book.disabled = not bool(info["book"])
+	_career_root.visible = true
+	_menu_row.visible = false
+	_sel_row.visible = false
+
+func hide_career() -> void:
+	_cr_on = false
+	_career_root.visible = false
+
+func career_visible() -> bool:
+	return _cr_on
+
+## The certificate for a new rank.
+func _build_certificate() -> void:
+	_cert_root = Control.new()
+	_cert_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_cert_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_cert_root.visible = false
+	add_child(_cert_root)
+	_box(_cert_root, 60, 330, 960, 1060, Color(0.98, 0.95, 0.85), 12, Color(0.78, 0.6, 0.2), 14)
+	_box(_cert_root, 90, 360, 900, 1000, Color(0, 0, 0, 0), 6, Color(0.78, 0.6, 0.2), 4)
+	_cert_title = _label(54, HORIZONTAL_ALIGNMENT_CENTER)
+	remove_child(_cert_title)
+	_cert_root.add_child(_cert_title)
+	_place(_cert_title, 0, 0, 100, 400, 880, 80)
+	_cert_title.text = "CERTIFICATE OF ACHIEVEMENT"
+	_cert_rank = _label(92, HORIZONTAL_ALIGNMENT_CENTER)
+	remove_child(_cert_rank)
+	_cert_root.add_child(_cert_rank)
+	_place(_cert_rank, 0, 0, 100, 560, 880, 130)
+	_cert_body = _label(36, HORIZONTAL_ALIGNMENT_CENTER)
+	remove_child(_cert_body)
+	_cert_root.add_child(_cert_body)
+	_cert_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_place(_cert_body, 0, 0, 130, 730, 820, 380)
+	_cert_date = _label(32, HORIZONTAL_ALIGNMENT_LEFT)
+	remove_child(_cert_date)
+	_cert_root.add_child(_cert_date)
+	_place(_cert_date, 0, 0, 130, 1280, 400, 50)
+	_cert_sign = _label(36, HORIZONTAL_ALIGNMENT_RIGHT)
+	remove_child(_cert_sign)
+	_cert_root.add_child(_cert_sign)
+	_place(_cert_sign, 0, 0, 520, 1280, 440, 50)
+	for l in [_cert_title, _cert_rank, _cert_body, _cert_date, _cert_sign]:
+		l.add_theme_color_override("font_color", Color(0.25, 0.18, 0.08))
+		l.add_theme_color_override("font_outline_color", Color(1, 1, 1, 0.0))
+	_cert_rank.add_theme_color_override("font_color", Color(0.7, 0.2, 0.15))
+	_build_instructor(_cert_root, 750.0, 1130.0, 150.0)
+	_box(_cert_root, 520, 1325, 440, 4, Color(0.25, 0.18, 0.08))
+
+func show_certificate(rank_name: String, body: String, date_text: String) -> void:
+	_cert_on = true
+	hide_career()
+	_set_overlay(true)
+	_ov_title.text = ""
+	_ov_body.text = ""
+	_ov_prompt.text = "TAP TO CONTINUE"
+	_cert_rank.text = rank_name
+	_cert_body.text = body
+	_cert_date.text = date_text
+	_cert_sign.text = "Capt. Wiggins, CFI"
+	_cert_root.visible = true
+	_menu_row.visible = false
+	_sel_row.visible = false
+
+func hide_certificate() -> void:
+	_cert_on = false
+	_cert_root.visible = false
+
+func certificate_visible() -> bool:
+	return _cert_on
 
 ## The hangar: paint schemes and pilot gear as buttons (buy / equip), built once.
 func _build_hangar() -> void:
@@ -496,7 +732,7 @@ func _build_logbook() -> void:
 		_log_root.add_child(pn)
 		var col := i % STAMP_COLS
 		var row := i / STAMP_COLS
-		_place(pn, 0, 0.0, 30 + col * 342, 760 + row * 78, 330, 68)
+		_place(pn, 0, 0.0, 30 + col * 342, 640 + row * 60, 330, 52)
 		var lb := _label(24, HORIZONTAL_ALIGNMENT_CENTER)
 		remove_child(lb)
 		pn.add_child(lb)
@@ -509,7 +745,24 @@ func _build_logbook() -> void:
 	_log_back.add_theme_font_size_override("font_size", 48)
 	_log_back.pressed.connect(func(): menu_action.emit("back"))
 	_log_root.add_child(_log_back)
-	_place(_log_back, 0.5, 0.0, -170, 760 + rows * 78 + 20, 340, 110)
+	_place(_log_back, 0.5, 0.0, -170, 1790, 340, 100)
+	for i in MAX_SLIPS:     # pink slips: failed checkrides, kept for good
+		var sp := _box(_log_root, 30, 640 + float(rows) * 60.0 + 16.0 + float(i) * 66.0, 1020, 58, Color(1.0, 0.72, 0.8, 0.95), 8, Color(0.8, 0.3, 0.45), 3)
+		var sl := _label(28, HORIZONTAL_ALIGNMENT_LEFT)
+		remove_child(sl)
+		sp.add_child(sl)
+		sl.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		sl.offset_left = 16
+		sl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		sl.add_theme_color_override("font_color", Color(0.45, 0.05, 0.2))
+		sl.add_theme_color_override("font_outline_color", Color(1, 1, 1, 0.0))
+		sp.visible = false
+		_log_slips.append(sp)
+		_log_slip_labels.append(sl)
+	_log_more = _label(26, HORIZONTAL_ALIGNMENT_RIGHT)
+	remove_child(_log_more)
+	_log_root.add_child(_log_more)
+	_place(_log_more, 0, 0, 530, 640 + float(rows) * 60.0 - 14.0, 520, 36)
 
 func _sel_button(text: String, dir: int) -> Button:
 	var b := Button.new()
@@ -538,7 +791,7 @@ func set_plane_choice(id: int) -> void:
 ## Is this screen position on the aircraft selector (so a tap there doesn't start the run)?
 func over_selector(pos: Vector2) -> bool:
 	var vs := get_viewport().get_visible_rect().size
-	if _log_on or _hangar_on or _ad_on:
+	if _log_on or _hangar_on or _ad_on or _cr_on or _cert_on:
 		return true
 	if not _sel_row.visible:
 		return false
@@ -755,6 +1008,8 @@ func clear_popup() -> void:
 # ---------- overlay / fade ----------
 
 func show_menu(best: int, career_text: String = "") -> void:
+	hide_career()
+	hide_certificate()
 	_set_overlay(true)
 	_ov_title.text = "GREASER"
 	_ov_title.add_theme_color_override("font_color", Color(1.0, 0.85, 0.2))
@@ -763,6 +1018,8 @@ func show_menu(best: int, career_text: String = "") -> void:
 
 ## A result screen (checkride passed / failed, rank-up): title, body and prompt.
 func show_notice(title: String, body: String, prompt: String, color: Color) -> void:
+	hide_career()
+	hide_certificate()
 	_set_overlay(true)
 	_ov_title.text = title
 	_ov_title.add_theme_font_size_override("font_size", 90)
@@ -771,9 +1028,10 @@ func show_notice(title: String, body: String, prompt: String, color: Color) -> v
 	_ov_prompt.text = prompt
 
 ## The logbook screen. `stamped` maps airport id -> {"name", "day", "n"}.
-func show_logbook(body: String, stamped: Dictionary) -> void:
+func show_logbook(body: String, stamped: Dictionary, slips: Array = []) -> void:
 	_log_on = true
 	hide_hangar()
+	hide_career()
 	_set_overlay(true)
 	_ov_title.text = "LOGBOOK"
 	_ov_title.add_theme_color_override("font_color", Color(0.95, 0.9, 0.7))
@@ -794,6 +1052,13 @@ func show_logbook(body: String, stamped: Dictionary) -> void:
 			_log_stamp_names[i].modulate = Color(1, 1, 1, 0.35)
 			st.border_color = Color(0.4, 0.45, 0.55, 0.6)
 			st.bg_color = Color(0.1, 0.12, 0.18, 0.7)
+	var shown := mini(slips.size(), MAX_SLIPS)
+	for i in MAX_SLIPS:
+		_log_slips[i].visible = i < shown
+		if i < shown:
+			var sl: Dictionary = slips[slips.size() - 1 - i]       # newest first
+			_log_slip_labels[i].text = "PINK SLIP   %s   %s checkride   %s" % [sl["date"], sl["rank"], sl["type"]]
+	_log_more.text = ("+%d earlier pink slips" % (slips.size() - shown)) if slips.size() > shown else ""
 	_log_root.visible = true
 	_menu_row.visible = false
 	_sel_row.visible = false
@@ -807,6 +1072,8 @@ func logbook_visible() -> bool:
 	return _log_on
 
 func show_over(total: int, best: int, landings: int, new_best: bool, best_streak: int = 0) -> void:
+	hide_career()
+	hide_certificate()
 	_set_overlay(true)
 	_ov_title.text = "RUN OVER"
 	_ov_title.add_theme_font_size_override("font_size", 150)
@@ -823,8 +1090,10 @@ func _set_overlay(on: bool) -> void:
 	if not on:
 		hide_logbook()
 		hide_hangar()
+		hide_career()
+		hide_certificate()
 	_sel_row.visible = on and not _splash.visible
-	_menu_row.visible = on and not _splash.visible and not _log_on and not _hangar_on
+	_menu_row.visible = on and not _splash.visible and not _log_on and not _hangar_on and not _cr_on and not _cert_on
 	_overlay.visible = on
 	_ov_title.visible = on
 	_ov_body.visible = on
@@ -997,6 +1266,8 @@ func begin_prewarm() -> void:
 	_log_root.visible = true
 	_hangar_root.visible = true
 	_ad_root.visible = true
+	_career_root.visible = true
+	_cert_root.visible = true
 	_menu_row.visible = true
 	_ov_title.text = "GREASER"
 	_ov_body.text = "0123456789 Greaser! Smooth Good Firm Hard CRASH Off the runway! Hit the trees!"
@@ -1023,6 +1294,8 @@ func end_prewarm() -> void:
 	_splash.visible = false
 	hide_logbook()
 	hide_hangar()
+	hide_career()
+	hide_certificate()
 	hide_ad()
 	_set_overlay(false)
 	clear_popup()

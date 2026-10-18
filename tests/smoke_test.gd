@@ -1474,7 +1474,8 @@ func run_all() -> void:
 	force(-1, -1)
 	root.size = Vector2i(1152, 648)
 
-	print("== 17. career, checkrides, logbook ==  [nodes %d]" % nodes())
+	print("== 17. career: ranks, unlocks, save ==  [nodes %d]" % nodes())
+	var STD: GDScript = load("res://scripts/Standards.gd")
 	var CAR: GDScript = load("res://scripts/Career.gd")
 	var APT: GDScript = load("res://scripts/Airports.gd")
 	# --- the save document
@@ -1482,39 +1483,103 @@ func run_all() -> void:
 	SV.data["best"] = 123
 	SV.data["airports"]["0_1"] = {"name": "Cedar Flats", "day": 20000, "n": 2}
 	SV.data["grades"][0] = 5
+	SV.data["pink_slips"].append({"day": 20001, "rank": 3, "type": 1})
+	SV.data["proficiency"]["counts"]["0"] = 2
 	var text: String = SV.to_text()
 	SV.data = SV.default_data()
 	check(SV.load_text(text) and SV.data["best"] == 123 and SV.data["airports"]["0_1"]["n"] == 2 and SV.data["grades"][0] == 5, "a save survives a round trip through its text")
+	check(SV.data["pink_slips"].size() == 1 and SV.data["pink_slips"][0]["type"] == 1 and SV.data["proficiency"]["counts"]["0"] == 2, "...pink slips and proficiency meters too")
 	check(SV.load_text("this is not json") == false and SV.data["best"] == 0 and SV.data["version"] == SV.VERSION, "an unreadable save falls back to a fresh one, no crash")
 	var old: Dictionary = SV.migrate({"best": 77})
 	check(old["best"] == 77 and old["version"] == SV.VERSION and old["rank"] == 0 and old["grades"].size() == 5, "version 0 (best score only) migrates with defaults for the rest")
-	var odd: Dictionary = SV.migrate({"version": 99, "rank": 17, "plane": -3, "grades": "x", "airports": 5, "future_thing": [1, 2]})
-	check(odd["rank"] == 5 and odd["plane"] == 0 and odd["grades"] == [0, 0, 0, 0, 0] and odd["airports"] is Dictionary and odd["future_thing"] == [1, 2] and odd["version"] == 99, "bad values are repaired, a newer version's keys survive")
-	# --- ranks and unlocks
-	check(CAR.RANKS.size() == 6 and CAR.rank_name(0) == "STUDENT" and CAR.rank_name(5) == "AIRLINE CAPTAIN", "six ranks, Student to Airline Captain")
-	check(CAR.planes(0) == [PL.CUB, PL.C172] and not CAR.planes(0).has(PL.JET), "a Student flies the Cub and the 172 only")
-	check(CAR.weather(1).has(SC.RAIN) and not CAR.weather(1).has(SC.FOG) and CAR.weather(2).has(SC.FOG) and CAR.scenarios(2).has(SC.NIGHT) and not CAR.scenarios(1).has(SC.NIGHT), "Instrument is what unlocks fog and night")
-	check(CAR.planes(4).has(PL.JET) == false and CAR.planes(5).has(PL.JET), "the jet comes with Airline Captain")
-	check(CAR.planes(0, true).size() == PL.COUNT and CAR.scenarios(0, true).size() == SC.COUNT and CAR.weather(0, true).size() == SC.WX_COUNT, "unlock-all opens everything")
+	var odd: Dictionary = SV.migrate({"version": 99, "rank": 17, "plane": -3, "grades": "x", "airports": 5, "future_thing": [1, 2], "pink_slips": "x", "proficiency": 4})
+	check(odd["rank"] == 7 and odd["plane"] == 0 and odd["grades"] == [0, 0, 0, 0, 0] and odd["airports"] is Dictionary and odd["future_thing"] == [1, 2] and odd["version"] == 99 and odd["pink_slips"] == [] and odd["proficiency"]["counts"] == {}, "bad values are repaired, a newer version's keys survive")
+	var v1: Dictionary = SV.migrate({"version": 1, "rank": 3, "career_points": 2500, "best": 400, "checkrides": {"2": {"passes": 1, "attempts": 2}}, "coins": 55})
+	check(v1["rank"] == 5 and v1["version"] == SV.VERSION and not v1.has("career_points") and v1["best"] == 400 and v1["coins"] == 55, "a version 1 save (old Commercial = rank 3) becomes the new Commercial (rank %d) and keeps the rest" % v1["rank"])
+	check(v1["checkrides"].has("4") and not v1["checkrides"].has("2"), "...with its checkride record moved to the new rank key")
+	var v1ranks := []
 	for r in 6:
-		check(not CAR.planes(r).is_empty() and not CAR.scenarios(r).is_empty() and CAR.weather(r).has(SC.CLEAR), "rank %d has something to fly" % r)
-	# every ride only uses what its rank has unlocked
-	var ride_ok := true
-	for r in 5:
-		for e in CAR.RIDES[r]["landings"]:
-			if not (CAR.planes(r).has(e["plane"]) and CAR.scenarios(r).has(e["scn"]) and CAR.weather(r).has(e["wx"]) and PL.offers(e["plane"], e["scn"]) and PL.weather(e["plane"]).has(e["wx"])):
-				ride_ok = false
-				print("      ride %d uses something locked / unsuited: %s" % [r, str(e)])
-		var cnt: int = CAR.RIDES[r]["landings"].size()
-		if cnt < 3 or cnt > 5:
-			ride_ok = false
-	check(ride_ok, "every checkride is 3-5 landings made only of what that rank has unlocked, and suited to the aircraft")
-	check(CAR.eligible(0, 299) == false and CAR.eligible(0, 300) and not CAR.eligible(5, 99999), "points open the checkride; the top rank has none")
-	var entry: Dictionary = CAR.RIDES[0]["landings"][0]
-	check(CAR.judge(entry, {"sink": 1.0, "offset": 3.0, "bounced": false}, false)["pass"], "a soft touchdown near the markers meets the standard")
-	var jf: Dictionary = CAR.judge(entry, {"sink": 3.0, "offset": 30.0, "bounced": true}, false)
-	check(not jf["pass"] and jf["fails"].size() == 3, "too hard, too far and bounced fails on all three standards")
-	check(not CAR.judge(entry, {}, true)["pass"], "a crash fails the landing")
+		v1ranks.append(SV.migrate({"version": 1, "rank": r})["rank"])
+	check(v1ranks == [0, 3, 4, 5, 6, 7], "old ranks map onto the new ladder: Student, Private, Instrument, Commercial, CFI, Airline (%s)" % str(v1ranks))
+	# --- the ladder
+	check(CAR.RANKS == ["STUDENT", "SPORT", "RECREATIONAL", "PRIVATE", "INSTRUMENT", "COMMERCIAL", "CFI", "AIRLINE CAPTAIN"], "eight ranks, in order")
+	check(CAR.types_for(1) == [SC.STANDARD, SC.SOFT_FIELD], "Sport: normal and soft-field landings")
+	check(CAR.types_for(2).size() == 4 and CAR.types_for(2).has(SC.SHORT_FIELD) and CAR.types_for(2).has(SC.ENGINE_OUT), "Recreational adds short field and engine out")
+	check(CAR.types_for(3).size() == 5 and CAR.types_for(3).has(SC.NIGHT) and CAR.types_for(3).has(SC.SOFT_FIELD), "Private: normal, short, soft, engine out, night")
+	check(CAR.types_for(4).has(SC.INSTRUMENT) and CAR.types_for(4).size() == 6 and not CAR.types_for(3).has(SC.INSTRUMENT), "Instrument adds instrument approaches")
+	check(CAR.types_for(5).has(SC.POWER_OFF) and CAR.types_for(5).size() == 7 and not CAR.types_for(4).has(SC.POWER_OFF), "Commercial adds the power-off 180")
+	check(CAR.types_for(6).size() > CAR.types_for(5).size() and CAR.types_for(6).has(SC.MOUNTAIN) and CAR.types_for(6).has(SC.WATER) and CAR.types_for(6).has(SC.POWER_OFF) and STD.tier_for_rank(6) == STD.tier_for_rank(5), "CFI: all the landing types at Commercial standards")
+	check(CAR.types_for(7).has(SC.INSTRUMENT) and CAR.types_for(7).has(SC.CARRIER), "Airline Captain: instrument approaches and the carrier")
+	check(CAR.planes(0) == [PL.CUB] and CAR.planes(1) == [PL.CUB] and CAR.planes(2) == [PL.CUB, PL.C172], "Student and Sport fly the Cub; Recreational adds the 172")
+	check(not CAR.planes(4).has(PL.TWIN) and CAR.planes(5).has(PL.TWIN) and not CAR.planes(5).has(PL.JET), "Commercial unlocks the twin")
+	check(CAR.planes(6).has(PL.GLIDER) and not CAR.planes(6).has(PL.JET) and CAR.planes(7).has(PL.JET), "the jet comes with Airline Captain")
+	check(CAR.has_scenario(0, SC.STANDARD) and not CAR.has_scenario(0, SC.SOFT_FIELD) and not CAR.has_scenario(1, SC.NIGHT) and CAR.has_scenario(3, SC.NIGHT), "Sport is day only; night opens at Private")
+	check(not CAR.has_scenario(6, SC.CARRIER) and CAR.has_scenario(7, SC.CARRIER), "the carrier unlocks with Airline Captain")
+	check(not CAR.weather(2).has(SC.RAIN) and CAR.weather(3).has(SC.RAIN) and not CAR.weather(3).has(SC.FOG) and CAR.weather(4).has(SC.FOG) and CAR.weather(5).has(SC.SHEAR), "weather opens up with the ranks (fog with Instrument)")
+	check(CAR.planes(0, true).size() == PL.COUNT and CAR.scenarios(0, true).size() == SC.COUNT and CAR.weather(0, true).size() == SC.WX_COUNT, "unlock-all opens everything")
+	var fly_ok := true
+	for r in range(1, 8):
+		for ty in CAR.types_for(r):
+			var any := false
+			for p in CAR.planes(r):
+				if PL.offers(p, ty) and PL.weather(p).has(CAR.pick_weather(ty)):
+					any = true
+			if not any:
+				fly_ok = false
+				print("      rank %d: nothing unlocked can fly %s" % [r, SC.NAMES[ty]])
+	check(fly_ok, "every landing type of every rank can be flown in an aircraft that rank has")
+	var lines_ok := true
+	for r in 8:
+		if CAR.unlock_lines(r).is_empty() and r > 0:
+			lines_ok = false
+	check(lines_ok, "every rank lists what it adds (%s)" % " | ".join(CAR.unlock_lines(5)))
+	# --- proficiency, endorsement, fee
+	var dat: Dictionary = SV.default_data()
+	var tgt := 2
+	check(not CAR.endorsed(dat, tgt) and CAR.missing(dat, tgt) == CAR.types_for(tgt), "no practice yet: nothing is endorsed, every type is missing")
+	check(CAR.needed() == 3, "3 practice landings fill a meter (Tuning)")
+	for k in 5:
+		CAR.add_practice(dat, SC.STANDARD)
+	check(CAR.count(dat, SC.STANDARD) == 3, "a meter stops at full")
+	for ty in CAR.types_for(tgt):
+		for k in 3:
+			CAR.add_practice(dat, ty)
+	check(CAR.endorsed(dat, tgt) and CAR.missing(dat, tgt).is_empty(), "every meter full: the instructor endorses")
+	CAR.drop_half(dat, SC.SHORT_FIELD)
+	check(CAR.count(dat, SC.SHORT_FIELD) == 1 and not CAR.endorsed(dat, tgt) and CAR.missing(dat, tgt) == [SC.SHORT_FIELD], "a failed type drops back to half and the endorsement goes")
+	CAR.drop_half(dat, SC.STANDARD)
+	check(CAR.count(dat, SC.STANDARD) == 1, "(and half is 1 of 3)")
+	dat["proficiency"]["counts"]["0"] = 3
+	dat["proficiency"]["counts"]["1"] = 3
+	dat["proficiency"]["tier"] = STD.tier_for_rank(2)
+	CAR.on_rank_change(dat, 2)         # now training for Private (3): the same tier? no: Private is tier 1
+	check(CAR.count(dat, SC.STANDARD) == 0, "a new tier starts the meters again")
+	dat["proficiency"]["counts"]["0"] = 3
+	CAR.on_rank_change(dat, 3)         # training for Instrument (4): same tier as Private
+	check(CAR.count(dat, SC.STANDARD) == 3, "the same tier keeps the meters it already filled")
+	check(CAR.fee(1) == int(roundf(float(tn.exam_fee_base))) and CAR.fee(5) > CAR.fee(3) and CAR.fee(3) > CAR.fee(1), "the examiner fee grows with the rank (%d, %d, %d ...)" % [CAR.fee(1), CAR.fee(2), CAR.fee(3)])
+	check(CAR.fee(3, true) == int(ceilf(float(CAR.fee(3)) * 0.5)), "...and can be halved (%d -> %d)" % [CAR.fee(3), CAR.fee(3, true)])
+	var rngc := RandomNumberGenerator.new()
+	rngc.seed = 77
+	var draw_ok := true
+	var seen_draws := {}
+	for i in 30:
+		var dr: Array[int] = CAR.draw(5, int(tn.ride_landings), rngc)
+		var uniq := {}
+		for t in dr:
+			uniq[t] = true
+			if not CAR.types_for(5).has(t):
+				draw_ok = false
+		if dr.size() != int(tn.ride_landings) or uniq.size() != dr.size():
+			draw_ok = false
+		seen_draws[str(dr)] = true
+	check(draw_ok and seen_draws.size() > 5, "a checkride draws %d distinct landing types of the rank, differently each time (%d draws)" % [int(tn.ride_landings), seen_draws.size()])
+	var plane_ok := true
+	for i in 40:
+		var pe: Dictionary = CAR.make_entry(CAR.types_for(7)[i % 5], 7, rngc)
+		if not CAR.planes(7).has(pe["plane"]) or not PL.offers(pe["plane"], pe["scn"]):
+			plane_ok = false
+	check(plane_ok and CAR.make_entry(SC.CARRIER, 7, rngc)["plane"] == PL.JET and CAR.make_entry(SC.INSTRUMENT, 4, rngc)["wx"] == SC.FOG, "landings get an aircraft that suits them (the carrier: the jet); instrument approaches are in fog")
 	# --- airports
 	var seen := {}
 	var unique := true
@@ -1522,130 +1587,106 @@ func run_all() -> void:
 		if seen.has(a["name"]):
 			unique = false
 		seen[a["name"]] = true
-	check(unique and APT.count() >= 20 and APT.pool_size(SC.CARRIER) >= 3, "%d airports, every one with its own name" % APT.count())
-	# --- a Student run: only unlocked things, landings are logged
+	check(unique and APT.count() >= 30 and APT.pool_size(SC.INSTRUMENT) >= 3 and APT.pool_size(SC.SOFT_FIELD) >= 3, "%d airports, every one with its own name" % APT.count())
+	# --- free flight: only what the rank has unlocked, and landings are logged
 	SV.data = SV.default_data()
 	force(-1, -1)
 	main.start_run()
 	main._end_card()
-	check(main.available_planes() == [PL.CUB, PL.C172], "the aircraft selector only offers what is unlocked")
+	check(main.available_planes() == [PL.CUB], "a Student's selector only offers the Cub")
 	var only_ok := true
 	for i in 40:
 		main._begin_round(false)
-		if not CAR.scenarios(0).has(main.scenario) or not CAR.weather(0).has(main.weather):
+		if main.scenario != SC.STANDARD or main.weather != SC.CLEAR:
 			only_ok = false
-	check(only_ok, "a Student only gets Standard / Short Field in clear weather over 40 approaches")
+	check(only_ok, "a Student only gets normal landings in clear weather over 40 approaches")
+	SV.data["rank"] = 3
+	CAR.on_rank_change(SV.data, 3)
+	var seen_scn2 := {}
+	var ok_scn := true
+	for i in 120:
+		main.rng.seed = 6000 + i
+		main.round_no = 5 + i % 6
+		main._begin_round(false)
+		seen_scn2[main.scenario] = true
+		if not CAR.has_scenario(3, main.scenario) or not CAR.weather(3).has(main.weather):
+			ok_scn = false
+	check(ok_scn and seen_scn2.has(SC.NIGHT) and seen_scn2.has(SC.SOFT_FIELD) and not seen_scn2.has(SC.INSTRUMENT) and not seen_scn2.has(SC.CARRIER), "a Private flies what Private has (night, soft field ...) and no instrument approaches or carriers")
+	SV.data = SV.default_data()
+	main.start_run()
+	main._end_card()
 	new_round(1701, 3)
 	var ap_id: String = APT.id_of(main.scenario, main.airport_idx)
 	land_at(0.3, 0.0)
 	check(SV.data["landings"] == 1 and SV.data["grades"][0] == 1, "a Greaser is logged: landing count and grade tally")
-	check(SV.data["career_points"] == main.last_result["points"] and SV.data["career_points"] > 0, "its points count toward the career (%d)" % SV.data["career_points"])
 	check(SV.data["airports"].has(ap_id) and SV.data["airports"][ap_id]["n"] == 1, "the airport it was at is stamped (%s)" % SV.data["airports"][ap_id]["name"])
-	check(main.hud._popup_text_for_test() != "" , "(popup shown)")
 	var ap_scn: int = main.scenario
 	var ap_idx: int = main.airport_idx
 	force(ap_scn, -1)
 	new_round(1701, 3)
 	force(-1, -1)
 	main.airport_idx = ap_idx
-	check(main.scenario == ap_scn, "(same scenario again)")
 	land_at(0.3, 0.0)
 	check(SV.data["airports"][ap_id]["n"] == 2 and SV.data["airports"].size() == 1, "landing there again adds to the same stamp, no new one")
 	main._crash("test")
 	check(SV.data["crashes"] == 1, "a crash is logged")
-	# --- the checkride
-	SV.data["career_points"] = 299
-	check(not main.can_take_checkride(), "299 points: no checkride yet")
-	SV.data["career_points"] = 300
-	check(main.can_take_checkride(), "300 points opens the Private checkride")
-	main.state = MAIN.OVER
-	main._on_menu_action("ride")
-	check(main.mode == MAIN.RIDE and main.state == MAIN.CARD and main.ride_target == 1 and main.ride_idx == 0, "the CHECKRIDE button starts it with a title card")
-	var e0: Dictionary = main._ride_entry()
-	check(main.scenario == e0["scn"] and main.weather == e0["wx"] and main.plane_id == e0["plane"] and main.round_no == e0["round"], "landing 1 is the fixed scenario / weather / aircraft / round")
-	check(main.hud._card_blurb.text.contains("Standards") , "the card spells out the standards")
-	var len_a: float = main.airfield.rwy_len
-	var thr_a: float = main.airfield.thr
-	main._begin_round(false)
-	check(main.airfield.rwy_len == len_a and main.airfield.thr == thr_a, "the checkride runway is the same every time (fixed seed)")
-	check(main.strikes_max() == 1, "a checkride allows no crash")
-	# fly the whole ride, perfectly
-	var ride_n: int = CAR.RIDES[0]["landings"].size()
-	var done := false
-	for k in ride_n:
-		check(main.ride_idx == k, "checkride landing %d of %d" % [k + 1, ride_n])
-		main._end_card()
-		main.aircraft.reset(0.0, 30.0)
-		land_at(0.3, 0.0)
-		check(main.ride_fails.is_empty(), "(landing %d meets the standards: %s)" % [k + 1, str(main.ride_fails)])
-		for i in 600:
-			main.advance(1.0 / 30.0)
-			if main.state == MAIN.CARD or main.state == MAIN.OVER:
-				break
-	check(main.state == MAIN.OVER and main.ride_passed and SV.data["rank"] == 1, "all landings to standard: the checkride is passed and the rank is Private")
-	check(main.hud._ov_title.text.contains("PRIVATE") and main.hud._ov_body.text.contains("Mountain"), "the rank-up screen names the rank and what it unlocks (%s)" % main.hud._ov_body.text.replace("\n", " | "))
-	check(SV.data["checkrides"]["1"]["passes"] == 1, "the pass is recorded")
-	check(main.available_planes() == [PL.CUB, PL.C172] and CAR.scenarios(1).has(SC.MOUNTAIN), "Private opens the mountain strip, engine out and rain")
-	main._continue_from_over()
-	check(main.state == MAIN.MENU and main.mode == MAIN.FREE, "after a pass, a tap goes back to the menu")
-	# --- failing one
-	SV.data["career_points"] = 900
+	# --- the career screen
+	SV.data = SV.default_data()
 	main.state = MAIN.MENU
-	main._on_menu_action("ride")
-	main._end_card()
-	land_at(1.5, 0.0)       # 3.4 sink: over the standard (and a bounce)
-	for i in 600:
-		main.advance(1.0 / 30.0)
-		if main.state == MAIN.OVER:
-			break
-	check(not main.ride_fails.is_empty(), "a rough landing misses the standards (%s)" % str(main.ride_fails))
-	check(main.state == MAIN.OVER and not main.ride_passed and SV.data["rank"] == 1, "a failed checkride ends at once and the rank stays")
-	check(main.hud._ov_title.text.contains("FAILED") and main.hud._ov_prompt.text.contains("RETRY"), "the debrief says so and offers a retry")
-	main._continue_from_over()
-	check(main.mode == MAIN.RIDE and main.ride_idx == 0 and main.ride_fails.is_empty() and main.state == MAIN.CARD, "retrying starts the checkride again from landing 1")
-	check(SV.data["checkrides"]["2"]["attempts"] == 1 and SV.data["checkrides"]["2"]["passes"] == 0, "the failed attempt is recorded")
-	main._end_card()
-	main._crash("test")
-	for i in 600:
-		main.advance(1.0 / 30.0)
-		if main.state == MAIN.OVER:
-			break
-	check(main.state == MAIN.OVER and not main.ride_passed, "a crash fails the checkride too")
+	main._show_menu()
+	check(main.hud._ov_body.text.contains("STUDENT PILOT") and main.hud._ov_body.text.contains("SPORT"), "the menu shows the rank and what you are training for (%s)" % main.hud._ov_body.text.split("\n")[1])
+	main._on_menu_action("career")
+	check(main.hud.career_visible() and main.hud._cr_rows[0]["name"].visible and main.hud._cr_rows[1]["name"].visible and not main.hud._cr_rows[2]["name"].visible, "the career screen lists the landing types of the next rank (Sport: 2 rows)")
+	check(main.hud._cr_rows[0]["name"].text == "Normal Landing" and main.hud._cr_rows[1]["name"].text == "Soft Field", "...by name (%s, %s)" % [main.hud._cr_rows[0]["name"].text, main.hud._cr_rows[1]["name"].text])
+	var pips_shown := 0
+	for pip in main.hud._cr_rows[0]["pips"]:
+		if pip.visible:
+			pips_shown += 1
+	check(pips_shown == 3, "...each with a proficiency meter of %d pips" % pips_shown)
+	SV.data["proficiency"]["counts"]["0"] = 2
+	main._on_menu_action("career")
+	check(main.hud._cr_rows[0]["pips"][1].color.g > 0.8 and main.hud._cr_rows[0]["pips"][2].color.g < 0.5, "two landings in: two pips lit")
+	check(main.hud._cr_speech.text.contains("Soft Field") and main.hud._cr_stamp.text == "", "the instructor says what is left to practise")
+	SV.data["proficiency"]["counts"]["8"] = 3
+	SV.data["proficiency"]["counts"]["0"] = 3
+	main._on_menu_action("career")
+	check(main.hud._cr_stamp.text == "ENDORSED" and main.hud._cr_speech.text.contains("endorsement"), "every meter full: the instructor signs the endorsement")
+	main._on_menu_action("back")
+	check(not main.hud.career_visible() and main.state == MAIN.MENU, "BACK leaves the career screen")
 	# --- the logbook
-	main.state = MAIN.MENU
+	SV.add_slip(20100, 3, SC.SHORT_FIELD)
 	main._on_menu_action("logbook")
 	check(main.hud.logbook_visible() and main.hud._log_stamps.size() == APT.count(), "the logbook screen shows a slot for every airport")
-	check(main.hud._ov_body.text.contains("Landings") and main.hud._ov_body.text.contains("Airports stamped  %d / %d" % [SV.data["airports"].size(), APT.count()]), "...with totals and the stamp count (%s)" % main.hud._ov_body.text.replace("\n", " | "))
-	var stamped := 0
-	for l in main.hud._log_stamp_names:
-		if l.text != "- - -":
-			stamped += 1
-	check(stamped == SV.data["airports"].size() and stamped >= 1, "one slot is stamped for every airport visited (%d)" % stamped)
+	check(main.hud._ov_body.text.contains("Landings") and main.hud._ov_body.text.contains("Airports stamped  %d / %d" % [SV.data["airports"].size(), APT.count()]), "...with totals and the stamp count")
+	check(main.hud._log_slips[0].visible and main.hud._log_slip_labels[0].text.contains("PINK SLIP") and main.hud._log_slip_labels[0].text.contains("PRIVATE") and main.hud._log_slip_labels[0].text.contains("Short Field"), "...and the pink slip (%s)" % main.hud._log_slip_labels[0].text)
 	main._on_menu_action("back")
 	check(not main.hud.logbook_visible() and main.state == MAIN.MENU, "BACK returns to the menu")
 	# --- debug
 	main.debug_unlock_all(true)
 	check(main.available_planes().size() == PL.COUNT, "debug: unlock all opens every aircraft")
-	main.debug_cycle_plane()
-	check(main.plane_id != PL.C172 or true, "debug: next aircraft")
+	main.debug_unlock_all(false)
+	main.debug_promote()
+	check(SV.data["rank"] == 1, "debug: promote rank")
 	main.debug_reset_save()
-	check(SV.data["rank"] == 0 and SV.data["landings"] == 0 and not SV.data["unlock_all"] and main.available_planes().size() == 2, "debug: reset save wipes the career and the unlocks")
+	check(SV.data["rank"] == 0 and SV.data["landings"] == 0 and not SV.data["unlock_all"] and main.available_planes().size() == 1 and SV.data["pink_slips"].is_empty(), "debug: reset save wipes the career and the unlocks")
 	# --- nothing is allocated by any of it
 	SV.data["unlock_all"] = true
+	main.state = MAIN.MENU
 	var n17 := nodes()
 	var r17 := resources()
 	for i in 3:
 		main.state = MAIN.MENU
 		main._on_menu_action("logbook")
 		main._on_menu_action("back")
-		main._on_menu_action("ride")
-		main._end_card()
+		main._on_menu_action("career")
+		main._on_menu_action("back")
+		new_round(1710 + i, 3)
 		land_at(0.3, 0.0)
 		for k in 200:
 			main.advance(1.0 / 30.0)
 	main.start_run()
 	main._end_card()
-	check(nodes() == n17 and resources() <= r17 + 3, "logbook, checkrides and landings allocate nothing (%d -> %d nodes)" % [n17, nodes()])
+	check(nodes() == n17 and resources() <= r17 + 3, "the career screen, logbook and landings allocate nothing (%d -> %d nodes)" % [n17, nodes()])
 	SV.data["unlock_all"] = true
 	force(-1, -1)
 
@@ -1806,31 +1847,6 @@ func run_all() -> void:
 	check(main.state == MAIN.AD and main.hud.ad_visible(), "tapping it plays the fake ad")
 	main.advance(float(tn.ad_fake_seconds) + 0.1)
 	check(main.state == MAIN.OVER and SV.data["coins"] == coins_before + earned and not main.hud._menu_buttons["ad"].visible, "then the coins are doubled (+%d) and the offer is gone" % earned)
-	# --- rewarded: retry a checkride landing
-	SV.data["career_points"] = 300
-	main._continue_from_over()
-	main.state = MAIN.MENU
-	main._on_menu_action("ride")
-	main._end_card()
-	land_at(1.5, 0.0)
-	for i in 600:
-		main.advance(1.0 / 30.0)
-		if main.state == MAIN.OVER:
-			break
-	check(main.state == MAIN.OVER and not main.ride_passed and main.hud._menu_buttons["ad"].visible and main.hud._menu_buttons["ad"].text.contains("RETRY"), "a failed checkride offers a rewarded retry of the landing")
-	main._on_menu_action("ad")
-	main.advance(float(tn.ad_fake_seconds) + 0.1)
-	check(main.mode == MAIN.RIDE and main.state == MAIN.CARD and main.ride_idx == 0 and main.ride_fails.is_empty(), "after the ad the same landing starts again")
-	main._end_card()
-	land_at(0.3, 0.0)
-	check(main.ride_fails.is_empty(), "(and a good one passes: %s)" % str(main.ride_fails))
-	main._end_card()
-	main._crash("test")
-	for i in 900:
-		main.advance(1.0 / 30.0)
-		if main.state == MAIN.OVER:
-			break
-	check(main.state == MAIN.OVER and not main.hud._menu_buttons["ad"].visible, "the retry can only be used once per attempt")
 	# --- flags and allocation
 	DF.parse(["noads"] as Array[String])
 	check(not DF.ads_enabled() and DF.summary() == "noads", "?noads is a flag and shows in the summary")
@@ -1867,7 +1883,6 @@ func run_all() -> void:
 
 	print("== 19. realism: units, Vref, glidepath, landing types ==  [nodes %d]" % nodes())
 	var PLN: GDScript = load("res://scripts/Planes.gd")
-	var STD: GDScript = load("res://scripts/Standards.gd")
 	# --- knots: Vref and stall per aircraft (Tuning values)
 	check(PLN.vref(PLN.CUB) == 45.0 and PLN.stall_kt(PLN.CUB) == 38.0, "Cub: 45 kt approach, 38 kt stall")
 	check(PLN.vref(PLN.C172) == 65.0 and PLN.stall_kt(PLN.C172) == 48.0, "172: 65 / 48 kt")
