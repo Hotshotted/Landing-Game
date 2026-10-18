@@ -85,6 +85,9 @@ var wet := false        # rain: the runway is slippery
 var vis_end := 0.0      # fog / rain: how far you can see (0 = unlimited)
 var turb := 0.0         # turbulence strength on final (0 = none)
 var shear_back := 0.0   # wind shear hits this far before the aim point (0 = none)
+var soft := false       # soft field: rough grass (more drag, the nose must be held off)
+var instrument := false # instrument approach: thick fog until the decision height
+var dh := 20.0          # decision height (units above the ground): the runway appears below it
 
 var _box := BoxMesh.new()
 var _cone := CylinderMesh.new()
@@ -262,7 +265,7 @@ func _build_scenario_pools() -> void:
 	for i in MAX_WAVES:
 		var wv := _mi(_box, Color(0.9, 0.97, 1.0), false, null, true)
 		_waves.append(wv)
-		_wave_x.append(-150.0 + float(i) * 23.7 + fmod(float(i) * 5.3, 7.0))
+		_wave_x.append(-300.0 + float(i) * 70.0 + fmod(float(i) * 5.3, 21.0))
 	for i in MAX_LIGHTS:
 		var lm := _mi(_box, Color(1, 1, 1), false, _rwy_root, true)
 		lm.scale = Vector3(0.7, 0.7, 0.7)
@@ -376,8 +379,12 @@ func generate(round_no: int, rng: RandomNumberGenerator, scn: int = 0, wx: int =
 	deck_off = 0.0
 	has_wires = false
 	night = scn == Scenarios.NIGHT
-	power = 0.0 if (scn == Scenarios.ENGINE_OUT or plane_power == 0.0) else 1.0
-	sink_mult = Tuning.engine_out_sink_mult if scn == Scenarios.ENGINE_OUT else 1.0
+	var dead := scn == Scenarios.ENGINE_OUT or scn == Scenarios.POWER_OFF
+	power = 0.0 if (dead or plane_power == 0.0) else 1.0
+	sink_mult = Tuning.engine_out_sink_mult if dead else 1.0
+	soft = scn == Scenarios.SOFT_FIELD
+	instrument = scn == Scenarios.INSTRUMENT
+	dh = Units.units_of_ft(Tuning.instrument_dh_ft)
 	wet = wx == Scenarios.RAIN
 	vis_end = 0.0
 	turb = 0.0
@@ -400,17 +407,29 @@ func generate(round_no: int, rng: RandomNumberGenerator, scn: int = 0, wx: int =
 	match scn:
 		Scenarios.SHORT_FIELD:
 			surface = ASPHALT if rng.randf() < 0.6 else GRASS
-			rwy_len = rng.randf_range(68.0, 100.0) * (1.0 - 0.12 * r)
+			rwy_len = rng.randf_range(Tuning.short_field_min, Tuning.short_field_max) * (1.0 - 0.12 * r)
 		Scenarios.MOUNTAIN:
 			surface = DIRT if rng.randf() < 0.65 else GRASS
-			rwy_len = rng.randf_range(110.0, 170.0) * (1.0 - 0.1 * r)
+			rwy_len = rng.randf_range(380.0, 520.0) * (1.0 - 0.1 * r)
 			slope_m = tan(deg_to_rad(rng.randf_range(Tuning.mountain_slope_min, Tuning.mountain_slope_max)))
+		Scenarios.SOFT_FIELD:
+			surface = GRASS
+			rwy_len = rng.randf_range(Tuning.soft_field_min, Tuning.soft_field_max) * (1.0 - 0.1 * r)
+		Scenarios.ENGINE_OUT:
+			surface = GRASS if rng.randf() < 0.55 else DIRT      # the best field there is: unpaved and not long
+			if surface == GRASS:
+				rwy_len = rng.randf_range(Tuning.runway_length_grass_min, Tuning.runway_length_grass_max) * (1.0 - 0.15 * r)
+			else:
+				rwy_len = rng.randf_range(Tuning.runway_length_dirt_min, Tuning.runway_length_dirt_max) * (1.0 - 0.15 * r)
+		Scenarios.INSTRUMENT:
+			surface = ASPHALT
+			rwy_len = rng.randf_range(Tuning.runway_length_asphalt_min, Tuning.runway_length_asphalt_max) * (1.0 - 0.15 * r)
 		Scenarios.WATER:
 			surface = WATER
-			rwy_len = rng.randf_range(130.0, 210.0)
+			rwy_len = rng.randf_range(600.0, 800.0)
 		Scenarios.CARRIER:
 			surface = DECK
-			rwy_len = rng.randf_range(105.0, 135.0) * (1.0 - 0.08 * r)
+			rwy_len = rng.randf_range(190.0, 230.0) * (1.0 - 0.08 * r)
 			deck_h = Tuning.carrier_deck_height
 			deck_speed = rng.randf_range(Tuning.carrier_speed_min, Tuning.carrier_speed_max)
 			has_wires = true
@@ -420,15 +439,17 @@ func generate(round_no: int, rng: RandomNumberGenerator, scn: int = 0, wx: int =
 			deck_h = Tuning.truck_height
 			deck_speed = rng.randf_range(Tuning.truck_speed_min, Tuning.truck_speed_max)
 	# a fast aircraft needs a long paved runway
-	if plane_min_len > 0.0 and (scn == Scenarios.STANDARD or scn == Scenarios.ENGINE_OUT or scn == Scenarios.NIGHT):
+	if plane_min_len > 0.0 and (scn == Scenarios.STANDARD or scn == Scenarios.ENGINE_OUT or scn == Scenarios.NIGHT or scn == Scenarios.POWER_OFF or scn == Scenarios.INSTRUMENT):
 		surface = ASPHALT
 		rwy_len = maxf(rwy_len, plane_min_len)
 	# terrain: nothing in the first rounds; only the standard and short-field approaches have obstacles
 	terrain = FLAT
 	if scn == Scenarios.SHORT_FIELD:
 		terrain = TREES
+	elif scn == Scenarios.ENGINE_OUT and rng.randf() < 0.4:
+		terrain = TREES
 	elif scn == Scenarios.STANDARD and round_no > 2:
-		var short := 1.0 - clampf((rwy_len - 80.0) / 160.0, 0.0, 1.0)
+		var short := 1.0 - clampf((rwy_len - 400.0) / 500.0, 0.0, 1.0)
 		var u2 := rng.randf()
 		if u2 < 0.25 + 0.3 * short:
 			terrain = TREES
@@ -449,9 +470,12 @@ func generate(round_no: int, rng: RandomNumberGenerator, scn: int = 0, wx: int =
 			turb = Tuning.turb_strength * (0.7 + 0.6 * r)
 		Scenarios.SHEAR:
 			shear_back = rng.randf_range(35.0, 60.0)
+	if instrument:
+		vis_end = Tuning.instrument_vis
 	# the plain approach path: sink / ground speed
-	path_slope = Tuning.trim_sink * sink_mult * plane_sink / maxf(Tuning.approach_speed * plane_speed - wind_base, 6.0)
-	start_altitude = rng.randf_range(Tuning.start_altitude_min, Tuning.start_altitude_max) + deck_h
+	var gs_app := maxf(Tuning.approach_speed * plane_speed - wind_base, 6.0)
+	path_slope = Tuning.approach_speed * plane_speed * tan(deg_to_rad(Tuning.glide_angle_deg)) * sink_mult * plane_sink / gs_app
+	start_altitude = path_slope * gs_app * Tuning.approach_seconds * rng.randf_range(0.85, 1.15) * (1.6 if instrument else 1.0) + deck_h
 	aim_off = clampf(rwy_len * Tuning.aim_fraction, Tuning.aim_min, Tuning.aim_max)
 	if scn == Scenarios.TRUCK:
 		aim_off = rwy_len * 0.45
@@ -469,30 +493,32 @@ func generate(round_no: int, rng: RandomNumberGenerator, scn: int = 0, wx: int =
 	var cap_off := rwy_len * 0.5
 	if terrain == TREES:
 		tree_count = rng.randi_range(3, 6)
-		var gap := rng.randf_range(4.0, 9.0)
-		var spacing := rng.randf_range(4.5, 6.5)
+		var gap := rng.randf_range(10.0, 25.0)
+		var spacing := rng.randf_range(6.0, 9.0)
 		for i in tree_count:
 			var rel := -gap - float(i) * spacing + rng.randf_range(-0.8, 0.8)
 			tree_x[i] = rel
 			tree_hw[i] = rng.randf_range(1.8, 2.6)
-			tree_h[i] = rng.randf_range(5.0, 10.0)
+			tree_h[i] = rng.randf_range(4.0, 8.0)
 			aim_off = maxf(aim_off, rel + (tree_h[i] + 2.5) / comfy)
 		if aim_off > cap_off:
 			aim_off = cap_off
 			for i in tree_count:   # too tall for this short field: cut the trees down to what the markers allow
-				tree_h[i] = clampf(minf(tree_h[i], (aim_off - tree_x[i]) * comfy - 2.5), 3.0, 10.0)
+				tree_h[i] = clampf(minf(tree_h[i], (aim_off - tree_x[i]) * comfy - 2.5), 3.0, 8.0)
 	elif terrain == HILL:
 		hill_on = true
-		hill_hw = rng.randf_range(14.0, 22.0)
-		hill_x = -rng.randf_range(8.0, 14.0) - hill_hw
-		hill_h = rng.randf_range(5.0, 9.0)
+		hill_hw = rng.randf_range(40.0, 70.0)
+		hill_x = -rng.randf_range(20.0, 40.0) - hill_hw
+		hill_h = rng.randf_range(5.0, 10.0)
 		aim_off = maxf(aim_off, hill_x + (hill_h + 2.5) / comfy)
 		if aim_off > cap_off:
 			aim_off = cap_off
-			hill_h = clampf(minf(hill_h, (aim_off - hill_x) * comfy - 2.5), 3.0, 9.0)
+			hill_h = clampf(minf(hill_h, (aim_off - hill_x) * comfy - 2.5), 3.0, 10.0)
 	# where the plain approach path would touch down relative to the markers: random, but never under the obstacles;
 	# an engine-out glide comes in short (you have to stretch it)
-	if power == 0.0:
+	if scn == Scenarios.POWER_OFF:
+		path_error = rng.randf_range(-emax * 0.45, emax * 0.2)
+	elif power == 0.0:
 		path_error = rng.randf_range(-emax * 0.9, emax * 0.15)
 	else:
 		path_error = rng.randf_range(-emax, emax)
@@ -505,7 +531,7 @@ func generate(round_no: int, rng: RandomNumberGenerator, scn: int = 0, wx: int =
 		path_error = maxf(path_error, need)
 	# Where the threshold has to be at the moment of touchdown so the plain path meets the ground (or the deck, or the
 	# slope) path_error from the markers; a moving deck is started further back by how far it travels meanwhile.
-	var lead := 25.0 if slope_m > 0.0 else 0.0
+	var lead := 80.0 if slope_m > 0.0 else 0.0
 	var gs_nom := maxf(Tuning.approach_speed * plane_speed - wind_base, 6.0)
 	var thr0 := 0.0
 	for attempt in 8:
@@ -513,9 +539,9 @@ func generate(round_no: int, rng: RandomNumberGenerator, scn: int = 0, wx: int =
 		var thr_t := (start_altitude - deck_h - (s + slope_m) * (aim_off + path_error) - slope_m * lead) / s
 		var x_t := thr_t + aim_off + path_error
 		thr0 = thr_t - deck_speed * x_t / gs_nom
-		if thr0 >= 60.0:
+		if thr0 >= 120.0:
 			break
-		start_altitude += (60.0 - thr0) * s * 1.2 + 0.5     # too close: start a little higher instead
+		start_altitude += (120.0 - thr0) * s * 1.2 + 0.5     # too close: start a little higher instead
 	_thr0 = thr0
 	thr = thr0
 	rwy_end = thr + rwy_len
@@ -550,23 +576,23 @@ func build() -> void:
 	_place(_rwy, Vector3((thr + rwy_end) * 0.5, -0.02, 0.0), Vector3(rwy_len, 0.12, _half_z * 2.0))
 	var line_col := Color(0.97, 0.97, 0.95) if surface == ASPHALT or surface == DECK else Color(0.95, 0.9, 0.7)
 	var paint := surface != WATER and surface != TRUCK
-	var dash_n := mini(int(rwy_len / 9.0), MAX_DASHES) if paint else 0
+	var dash_n := mini(int(rwy_len / 28.0), MAX_DASHES) if paint else 0
 	for i in MAX_DASHES:
 		var d := _dashes[i]
 		d.visible = i < dash_n
 		if d.visible:
 			_set_color(d, line_col)
-			_place(d, Vector3(thr + 10.0 + float(i) * 9.0 + 2.0, 0.05, 0.0), Vector3(4.0, 0.03, 0.5))
-			d.visible = d.position.x < rwy_end - 6.0
+			_place(d, Vector3(thr + 36.0 + float(i) * 28.0 + 7.0, 0.05, 0.0), Vector3(14.0, 0.03, 0.8))
+			d.visible = d.position.x < rwy_end - 20.0
 	for i in MAX_BARS:
 		var b := _bars[i]
 		b.visible = paint
 		_set_color(b, line_col)
-		_place(b, Vector3(thr + 1.6, 0.05, -_half_z + 1.5 + float(i) * (2.0 * _half_z - 3.0) / float(MAX_BARS - 1)), Vector3(3.0, 0.03, 0.8))
+		_place(b, Vector3(thr + 5.0, 0.05, -_half_z + 1.5 + float(i) * (2.0 * _half_z - 3.0) / float(MAX_BARS - 1)), Vector3(8.0, 0.03, 0.8))
 		b.visible = paint
 	for k in 2:
 		var side := -1.0 if k == 0 else 1.0
-		_place(_aim_slabs[k], Vector3(aim_x, 0.06, side * _half_z * 0.5), Vector3(7.0, 0.03, 1.1))
+		_place(_aim_slabs[k], Vector3(aim_x, 0.06, side * _half_z * 0.5), Vector3(20.0, 0.03, 1.3))
 	_place(_end_bar, Vector3(rwy_end - 0.6, 0.06, 0.0), Vector3(1.2, 0.03, _half_z * 2.0))
 	_end_bar.visible = surface != WATER
 	# carrier wires
@@ -640,7 +666,7 @@ func _build_extras() -> void:
 		_waves[i].visible = water
 		if water:
 			_waves[i].position = Vector3(_wave_x[i], 0.1, -13.0 + fmod(float(i) * 3.7, 26.0))
-			_waves[i].scale = Vector3(3.0 + fmod(float(i) * 1.3, 2.0), 0.18, 0.45)
+			_waves[i].scale = Vector3(10.0 + fmod(float(i) * 1.3, 6.0), 0.18, 0.8)
 
 ## Night: runway edge lights, threshold (green) and end (red) lights, and a chain of approach lights before the threshold.
 func _build_lights() -> void:
@@ -649,7 +675,7 @@ func _build_lights() -> void:
 	_approach_count = 0
 	if not night:
 		return
-	var step := maxf(rwy_len / 22.0, 6.0)
+	var step := maxf(rwy_len / 22.0, 14.0)
 	var n := int(rwy_len / step)
 	for i in n + 1:
 		for side in [-1.0, 1.0]:
@@ -659,7 +685,7 @@ func _build_lights() -> void:
 		_set_light(Vector3(rwy_end - 0.4, 0.35, -_half_z + 0.6 + float(i) * (2.0 * _half_z - 1.2) / 5.0), Color(1.0, 0.2, 0.15))
 	_approach_first = _light_used
 	for k in 16:
-		_set_light(Vector3(thr - 6.0 * float(k + 1), 0.35, 0.0), Color(1, 1, 1))
+		_set_light(Vector3(thr - 20.0 * float(k + 1), 0.35, 0.0), Color(1, 1, 1))
 	_approach_count = 16
 
 func _set_light(pos: Vector3, color: Color) -> void:
@@ -751,6 +777,8 @@ func surface_decel() -> float:
 			d = Tuning.truck_decel
 	if wet:
 		d *= Tuning.rain_wet_decel
+	if soft:
+		d *= Tuning.soft_decel_mult
 	return d
 
 func smoke_color() -> Color:

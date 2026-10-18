@@ -23,6 +23,7 @@ var power := 1.0        # 1 = engine running, 0 = engine out (no speed recovery,
 var sink_mult := 1.0    # multiplies the approach sink rate (an engine-out glide is steeper)
 var gy := 0.0           # height of the ground under the plane (mountain slope, carrier deck, truck bed)
 var ground_tilt := 0.0  # slope of that ground in degrees (the drawn plane follows it while rolling)
+var nose_hold := false  # soft field rollout: the nose follows the finger instead of settling down
 # handling profile (multipliers on the Tuning values; set by apply_plane)
 var plane_id := 1
 var p_speed := 1.0
@@ -31,7 +32,7 @@ var p_lift := 1.0
 var p_response := 1.0
 var p_bleed := 1.0
 var p_recover := 1.0
-var p_stall := 1.0
+var p_stall := 0.74     # stall speed as a fraction of the approach speed (stall kt / Vref kt)
 var p_ge := 1.0
 var p_decel := 1.0
 var p_gust := 1.0
@@ -97,6 +98,7 @@ func reset(start_x: float, start_y: float) -> void:
 	theta_target = 0.0
 	gs = air_speed()
 	on_ground = false
+	nose_hold = false
 	wobble = 0.0
 	_wobble_v = 0.0
 	_pending_drag = 0.0
@@ -116,14 +118,20 @@ func consume_input(dt: float) -> void:
 ## One flight sub-step. `head` = total headwind, `gust_v` / `gust_h` = the current gust. Moves x and y.
 func step_air(h: float, head: float, gust_v: float, gust_h: float) -> void:
 	theta = move_toward(theta, theta_target, Tuning.pitch_rate * h)
-	s += (Tuning.speed_recover * p_recover * power * (1.0 - s) - Tuning.speed_bleed * p_bleed * theta / 10.0 - (1.0 - power) * Tuning.engine_out_drag * (0.4 if p_recover == 0.0 else 1.0)) * h
+	var agl := y - gy
+	var ge := 0.0     # 0 .. 1: how deep in ground effect
+	if agl < Tuning.ground_effect_height:
+		ge = 1.0 - maxf(agl, 0.0) / Tuning.ground_effect_height
+	var bleed := Tuning.speed_bleed * p_bleed * theta / 10.0
+	if theta > 0.0:
+		bleed *= 1.0 + Tuning.ground_effect_bleed * ge       # holding the flare in ground effect bleeds speed faster
+	s += (Tuning.speed_recover * p_recover * power * (1.0 - s) - bleed - (1.0 - power) * Tuning.engine_out_drag * (0.4 if p_recover == 0.0 else 1.0)) * h
 	s = clampf(s, 0.2, 1.5)
 	var s_eff := s + gust_h * Tuning.gust_airspeed_effect
-	var target := -trim_sink() + Tuning.pitch_lift_gain * p_lift * theta * clampf(s_eff, 0.0, 1.2)
+	var target := -trim_sink() + lift_gain() * theta * clampf(s_eff, 0.0, 1.2)
 	target -= maxf(stall_speed() - s_eff, 0.0) * Tuning.stall_sink_gain
-	var agl := y - gy
-	if agl < Tuning.ground_effect_height:
-		target += Tuning.ground_effect_lift * p_ge * (1.0 - maxf(agl, 0.0) / Tuning.ground_effect_height)
+	if ge > 0.0:
+		target += Tuning.ground_effect_lift * p_ge * ge * s_eff * s_eff      # too much speed floats, too little drops in
 	target += gust_v
 	if y >= Tuning.max_altitude:
 		target = minf(target, -1.0)
@@ -146,6 +154,11 @@ func bounce(v: float) -> void:
 	vy = v
 	y = gy + 0.02
 	s = maxf(s, 0.8)    # the rebound keeps its speed
+
+## While the nose is held off on a rollout the finger still pitches the plane (called once per frame).
+func ground_pitch(dt: float) -> void:
+	consume_input(dt)
+	theta = move_toward(theta, theta_target, Tuning.pitch_rate * dt)
 
 ## One rolling sub-step with braking `decel`.
 func step_ground(h: float, decel: float, floor_speed: float = 0.0) -> void:
@@ -230,16 +243,22 @@ func set_night(on: bool) -> void:
 
 ## The approach sink rate, airspeed, stall speed (as a fraction of the approach speed) and pitch lift for this plane.
 func trim_sink() -> float:
-	return Tuning.trim_sink * sink_mult * p_sink
+	return air_speed() * tan(deg_to_rad(Tuning.glide_angle_deg)) * sink_mult * p_sink
 
 func air_speed() -> float:
 	return Tuning.approach_speed * p_speed
 
 func stall_speed() -> float:
-	return Tuning.stall_speed * p_stall
+	return p_stall
 
+## Indicated airspeed in knots (1.0 = this aircraft's Vref).
+func airspeed_kt() -> float:
+	return s * Planes.vref(plane_id)
+
+## Sink-rate change per degree of pitch: it grows with the aircraft's speed (a fast aircraft changes its flight path as quickly
+## per degree, so every aircraft needs about the same nose-up change to level off).
 func lift_gain() -> float:
-	return Tuning.pitch_lift_gain * p_lift
+	return Tuning.pitch_lift_gain * p_lift * p_speed
 
 ## Height above the ground under the plane.
 func agl() -> float:
@@ -253,7 +272,10 @@ func set_view_scale(view_w: float) -> void:
 ## Per frame: place the model and set the drawn attitude.
 func update_visual(dt: float) -> void:
 	var goal := Tuning.pitch_visual_offset + theta * Tuning.pitch_visual_scale
-	if on_ground:
+	if on_ground and nose_hold:
+		_vis_pitch = lerpf(_vis_pitch, maxf(goal, ground_tilt), 1.0 - exp(-8.0 * dt))
+		_pivot.rotation.z = deg_to_rad(_vis_pitch + wobble * 0.3)
+	elif on_ground:
 		_vis_pitch = move_toward(_vis_pitch, ground_tilt, Tuning.nose_settle_rate * dt)
 		_pivot.rotation.z = deg_to_rad(_vis_pitch + wobble * 0.3)
 	else:

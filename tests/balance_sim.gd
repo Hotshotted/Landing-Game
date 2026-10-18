@@ -39,11 +39,12 @@ func _init() -> void:
 	await process_frame
 	main.test_mode = true
 	SV.enabled = false
+	SV.data["unlock_all"] = true
 	SC.forced_scenario = 0
 	SC.forced_weather = 0
-	for pl in [0, 3]:
+	for pl in [0, 1, 2, 3, 4]:
 		main.select_plane(pl)
-		for fh in [2.0, 3.0]:
+		for fh in [2.0, 3.0, 4.0]:
 			report("%-7s smart from %.1f" % [["cub", "172", "twin", "glider", "jet"][pl], fh], fh, 0.0)
 	main.select_plane(1)
 	quit()
@@ -54,7 +55,7 @@ func report(label: String, flare_h: float, flare_theta: float) -> void:
 	var total := 0
 	var sinks := 0.0
 	var offs := 0.0
-	var n := 14
+	var n := 8
 	for i in n:
 		main.rng.seed = 1000 + i
 		main.start_run()
@@ -94,10 +95,11 @@ func fly(flare_h: float, flare_theta: float) -> String:
 		if flare_h < 0.0 or agl > flare_h:
 			var closing: float = maxf(gs - float(af.deck_speed), 4.0)
 			var t_go: float = maxf((af.aim_x + aim_bias - ac.x) / closing, 0.5)
-			var want_rel: float = clampf(-agl / t_go, -5.0, -0.7 * ac.trim_sink())
+			var h_aim: float = ac.y - af.ground_y(af.aim_x)
+			var want_rel: float = clampf(-h_aim / t_go, -1.6 * ac.trim_sink(), -0.7 * ac.trim_sink())
 			cmd = (want_rel + gs * m + power_trim) / ac.lift_gain()
 		else:
-			var want: float = -(0.25 + 0.3 * agl) + gs * m
+			var want: float = -(0.33 + 0.3 * agl) + gs * m
 			cmd = (want + power_trim) / ac.lift_gain()
 		var dy: float = -(cmd - ac.theta_target) / (float(tn.pitch_per_pixel) * float(tn.sensitivity))
 		ac.touching = true

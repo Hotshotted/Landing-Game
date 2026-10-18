@@ -76,3 +76,22 @@ old best-score file; unreadable saves start fresh). `?tune` has Unlock all, Next
   them off. A real ad SDK replaces the fake screen later.
 - `?tune`: Unlock all, Next aircraft, Checkride, Reset save, +500 coins (plus the earlier force scenario / weather buttons and
   `?scenario=`, `?weather=`, `?plane=` flags).
+
+## Realism (career update, part 1)
+
+- **Units**: one world unit is 5 ft (`feet_per_unit`), so the 172's 22 units/s approach is 65 kt. Everything you read is in aviation
+  terms: airspeed in knots with Vref and a tolerance band on the bar, altitude in feet, vertical speed in ft/min, distances and
+  runway lengths in feet, wind in knots, touchdown sink in ft/s (`Units.gd`).
+- **Aircraft speeds** (Tuning knots, Vref / stall): Cub 45/38, 172 65/48, Twin 90/65, Glider 55/40, Jet 135/110.
+- **Glide path**: the approach attitude descends at 3 degrees (`glide_angle_deg`); the PAPI shows that path (power-off landings show
+  their steeper glide). Approaches last ~24 s (`approach_seconds`).
+- **Flare and float**: ground effect lift grows with the square of the airspeed (carry too much speed and you float down the runway),
+  holding the flare in ground effect bleeds speed faster, below the stall speed the plane drops in.
+- **Grading by sink rate**: Greaser! under 2 ft/s, Smooth under 3, Good under 4, Firm under 7, Hard above; each aircraft has a
+  structural limit (12 ft/s, the jet 18) above which it breaks (all Tuning values: `fps_*`).
+- **Landing types**, each judged on its own standard (`Standards.gd`; three tiers - Student/Sport/Recreational, Private/Instrument,
+  Commercial and up): normal / night (touch down at or within 600/400/200 ft beyond the aim point, approach speed measured at 50 ft within
+  Vref +15/-10, +10/-5, +/-5 kt, sink and no bounce), short field (300/200/100 ft), soft field (rough grass; minimum sink and hold the
+  nose off), power-off 180 (power cut abeam the point; within 200 ft), engine out (a forced landing on an unpaved field), instrument
+  approach (fog; fly the PAPI glide path to the 100 ft minimums, then the runway appears), plus the special scenarios (mountain strip,
+  seaplane, carrier, moving truck). Every landing shows STANDARD MET / MISSED.

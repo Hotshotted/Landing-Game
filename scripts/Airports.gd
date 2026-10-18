@@ -11,6 +11,9 @@ const POOLS: Array = [
 	["USS Hotshot", "USS Whiskers", "USS Greaser"],                                                       # carrier
 	["Lake Mirror", "Pelican Cove", "Reed Bay"],                                                          # seaplane
 	["Route 66 Flatbed", "Hauler's Highway", "Big Rig Run"],                                              # truck
+	["Mudhen Meadow", "Clover Knoll", "Buttercup Strip"],                                                  # soft field
+	["Abeam Acres", "Glide Slope Gap", "Coasting Creek"],                                                 # power-off 180
+	["Minimums Field", "Overcast Intl", "Mistral Airfield"],                                              # instrument
 ]
 
 static func count() -> int:

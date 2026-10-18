@@ -15,6 +15,9 @@ var _sink: Label
 var _speed_bar: ColorRect
 var _speed_back: ColorRect
 var _stall_mark: ColorRect
+var _speed_band: ColorRect          # the Vref tolerance band on the airspeed bar
+var _band_lo := 0.9
+var _band_hi := 1.15
 var _speed_label: Label
 var _gust: Label
 var _dist: Label
@@ -143,6 +146,11 @@ func _ready() -> void:
 	_speed_back.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_place(_speed_back, 1, 0, -300, 232, 280, 22)
 	add_child(_speed_back)
+	_speed_band = ColorRect.new()
+	_speed_band.color = Color(0.4, 0.9, 1.0, 0.5)
+	_speed_band.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_place(_speed_band, 1, 0, -300, 228, 40, 30)
+	add_child(_speed_band)
 	_speed_bar = ColorRect.new()
 	_speed_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_place(_speed_bar, 1, 0, -296, 236, 100, 14)
@@ -155,6 +163,7 @@ func _ready() -> void:
 	_speed_label = _label(24, HORIZONTAL_ALIGNMENT_RIGHT)
 	_place(_speed_label, 1, 0, -300, 258, 280, 32)
 	_speed_label.text = "AIRSPEED"
+	_speed_label.add_theme_font_size_override("font_size", 26)
 	_hint = _label(40, HORIZONTAL_ALIGNMENT_CENTER)
 	_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_place(_hint, 0.5, 1, -440, -380, 880, 200)
@@ -581,13 +590,13 @@ func set_runway(text: String) -> void:
 
 ## `head` > 0 headwind, < 0 tailwind.
 func set_wind(head: float) -> void:
-	var a := absf(head)
-	if a < 0.5:
+	var a := Units.kt(absf(head))
+	if a < 1.0:
 		_wind.text = "WIND  calm"
 	elif head > 0.0:
-		_wind.text = "WIND  %.0f  headwind  <<" % a
+		_wind.text = "WIND  %.0f KT headwind  <<" % a
 	else:
-		_wind.text = "WIND  %.0f  tailwind  >>" % a
+		_wind.text = "WIND  %.0f KT tailwind  >>" % a
 
 const STREAK_COLORS: Array[Color] = [
 	Color(1, 1, 1), Color(1.0, 0.92, 0.3), Color(1.0, 0.72, 0.2), Color(1.0, 0.5, 0.15), Color(1.0, 0.3, 0.2), Color(1.0, 0.25, 0.55), Color(0.85, 0.35, 1.0)]
@@ -679,22 +688,39 @@ func card_visible() -> bool:
 	return _card_root.visible
 
 ## Per-frame flight readout: altitude, sink rate (colour = how the touchdown would grade), airspeed fraction.
-func set_flight(alt: float, vy: float, s: float, show: bool) -> void:
+## Where the Vref tolerance band sits on the airspeed bar, as fractions of Vref (e.g. 0.92 .. 1.15).
+func set_speed_band(lo: float, hi: float) -> void:
+	_band_lo = lo
+	_band_hi = hi
+	_speed_band.offset_left = -300.0 + 280.0 * clampf(lo / 1.3, 0.0, 1.0)
+	_speed_band.offset_right = -300.0 + 280.0 * clampf(hi / 1.3, 0.0, 1.0)
+
+## The flight readouts: height above the ground (units -> feet), vertical speed (units/s -> feet per minute), airspeed as a fraction
+## of Vref and Vref in knots.
+func set_flight(alt: float, vy: float, s: float, vref_kt: float, show: bool) -> void:
 	_alt.visible = show
 	_sink.visible = show
 	_speed_bar.visible = show
 	_speed_back.visible = show
+	_speed_band.visible = show
 	_stall_mark.visible = show
 	_speed_label.visible = show
 	if not show:
 		return
-	_alt.text = "ALT %d" % int(roundf(alt))
+	_alt.text = "ALT %d FT" % (int(roundf(Units.ft(alt) / 5.0)) * 5)
 	var sink := -vy
-	_sink.text = "SINK %.1f" % maxf(sink, 0.0) if sink >= 0.0 else "CLIMB %.1f" % -sink
-	_sink.modulate = Grading.COLORS[Grading.grade_for_sink(maxf(sink, 0.0))]
+	var fpm := int(roundf(Units.fpm(vy) / 10.0)) * 10
+	_sink.text = "V/S %d FPM" % fpm
+	_sink.modulate = Grading.COLORS[Grading.grade_for_sink(maxf(sink, 0.0))] if sink >= 0.0 else Color(0.6, 0.9, 1.0)
 	var frac := clampf(s / 1.3, 0.0, 1.0)
 	_speed_bar.offset_right = _speed_bar.offset_left + 272.0 * frac
-	_speed_bar.color = Color(1, 0.35, 0.3) if s < stall_marker + 0.04 else Color(0.5, 0.95, 0.6)
+	if s < stall_marker + 0.04:
+		_speed_bar.color = Color(1, 0.35, 0.3)
+	elif s >= _band_lo and s <= _band_hi:
+		_speed_bar.color = Color(0.5, 0.95, 0.6)
+	else:
+		_speed_bar.color = Color(1.0, 0.85, 0.35)
+	_speed_label.text = "%d KT   VREF %d" % [int(roundf(s * vref_kt)), int(roundf(vref_kt))]
 	_stall_mark.offset_left = -300.0 + 280.0 * clampf(stall_marker / 1.3, 0.0, 1.0)
 	_stall_mark.offset_right = _stall_mark.offset_left + 4.0
 

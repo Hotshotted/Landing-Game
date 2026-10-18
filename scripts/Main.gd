@@ -40,6 +40,15 @@ var _ride_retry_used := false   # the rewarded "retry landing" has been used on 
 var _daily_day := 0
 var _ad_t := 0.0                # fake ad: seconds left
 var _ad_kind := ""              # "double", "retry" or "interstitial"
+var _standard: Dictionary = {}  # the standard this approach is judged on (Standards.for_type)
+var last_verdict: Dictionary = {}    # the verdict on the latest landing: {pass, fails}
+var _gate_dev_kt := INF         # airspeed at the 50 ft gate minus Vref (INF = not measured yet)
+var _nose_ok := true            # soft field: the nose was held off
+var _papi_run := 0.0            # instrument approach: seconds in a row off the glide path
+var _papi_worst := 0.0          # ... and the longest such stretch
+var _bump_t := 0.0
+var _touch_gs := 0.0            # ground speed at the touchdown that started the rollout
+var _instr_open := 0.0          # instrument approach: 0 = in the fog, 1 = the runway has appeared
 var _min_agl := 9999.0          # lowest the plane has been above the ground this approach (for the no-go-around rule)
 
 var state := MENU
@@ -210,7 +219,7 @@ func _show_menu() -> void:
 	hud.set_ad_button("", false)
 	hud.show_menu(best, _career_text())
 	_refresh_menu_buttons()
-	hud.set_flight(0.0, 0.0, 1.0, false)
+	hud.set_flight(0.0, 0.0, 1.0, 65.0, false)
 	hud.set_hint("")
 
 ## Start a fresh run IN PLACE: nothing is reloaded, created or freed.
@@ -279,6 +288,15 @@ func _begin_round(card: bool = true) -> void:
 	aircraft.set_night(airfield.night)
 	aircraft.reset(0.0, airfield.start_altitude)
 	_start_x = aircraft.x
+	_standard = Standards.for_type(scenario, _tier())
+	var vref := Planes.vref(plane_id)
+	hud.set_speed_band(1.0 - float(_standard["kt_minus"]) / vref, 1.0 + float(_standard["kt_plus"]) / vref)
+	_gate_dev_kt = INF
+	_nose_ok = true
+	_papi_run = 0.0
+	_papi_worst = 0.0
+	_instr_open = 0.0
+	last_verdict = {}
 	_compute_full_frame()
 	airfield.update_papi(aircraft.x, aircraft.y, true)
 	_dist_key = -1
@@ -298,7 +316,7 @@ func _begin_round(card: bool = true) -> void:
 		hud.set_round_text("CHECKRIDE %d/%d" % [ride_idx + 1, Career.ride_for(ride_target - 1)["landings"].size()])
 	else:
 		hud.set_round(round_no)
-	hud.set_runway("%s  %d m  %s" % [Airfield.SURFACE_NAMES[airfield.surface].to_upper(), int(airfield.rwy_len), _terrain_text()])
+	hud.set_runway("%s  %d FT  %s" % [Airfield.SURFACE_NAMES[airfield.surface].to_upper(), int(roundf(Units.ft(airfield.rwy_len) / 50.0)) * 50, _terrain_text()])
 	hud.set_scenario_text(_scenario_line())
 	hud.set_wind(wind.head())
 	hud.set_hint("Drag UP to raise the nose, DOWN to lower it.\nKeep the PAPI lights 2 white + 2 red.\nFlare just before touchdown." if round_no == 1 and landings == 0 else "")
@@ -307,6 +325,8 @@ func _begin_round(card: bool = true) -> void:
 	_gust_scale = 0.5 + 0.5 * r
 	if weather == Scenarios.TURBULENCE:
 		_gust_scale *= 1.3
+	if not card:
+		_announce()
 	if card:
 		state = CARD
 		hud.show_card(Scenarios.NAMES[scenario], Scenarios.WX_NAMES[weather] if weather != Scenarios.CLEAR else "", _card_blurb(entry), Scenarios.COLORS[scenario])
@@ -319,7 +339,7 @@ func _card_blurb(entry: Dictionary = {}) -> String:
 	var t: String = Airports.name_of(scenario, airport_idx) + "\n" + Scenarios.BLURBS[scenario]
 	if not entry.is_empty():
 		if mode == RIDE:
-			t += "\nStandards: " + ",  ".join(Career.standard_lines(entry))
+			t += "\nStandards: " + ",  ".join(Standards.lines(_standard, Planes.vref(plane_id)))
 		else:
 			t = "DAILY APPROACH  " + Daily.label(_daily_day) + "\n" + t + "\nOne approach. Best score counts."
 	if weather != Scenarios.CLEAR:
@@ -332,6 +352,27 @@ func _scenario_line() -> String:
 		t += "  -  " + Scenarios.WX_NAMES[weather]
 	return t
 
+## What the approach starts with: the power cut of a power-off 180 / an engine failure.
+func _announce() -> void:
+	if scenario == Scenarios.POWER_OFF:
+		hud.flash_warning("POWER CUT - abeam the point!", Color(1.0, 0.6, 0.4))
+	elif scenario == Scenarios.ENGINE_OUT or Planes.profile(plane_id)["power"] == 0.0:
+		hud.flash_warning("NO POWER", Color(1.0, 0.6, 0.4))
+
+## The tier (Standards) this approach is flown to: the rank's, or the checkride's.
+func _tier() -> int:
+	if mode == RIDE:
+		return Standards.tier_for_rank(ride_target)
+	return Standards.tier_for_rank(int(Save.data["rank"]))
+
+## The result of the landing so far, as Standards.judge wants it.
+func judge_result() -> Dictionary:
+	var r := last_result.duplicate()
+	r["gate_dev_kt"] = _gate_dev_kt
+	r["nose_ok"] = _nose_ok
+	r["papi_ok"] = _papi_worst <= Tuning.instrument_dev_seconds
+	return r
+
 ## The title card is over (timer or tap): the approach begins.
 func _end_card() -> void:
 	if state != CARD:
@@ -339,6 +380,7 @@ func _end_card() -> void:
 	state = APPROACH
 	_timer = 0.0
 	hud.hide_card()
+	_announce()
 
 ## Night / rain tint the sky and the light; fog and rain are drawn by the FogOverlay (see _update_fog).
 func _apply_environment() -> void:
@@ -558,8 +600,22 @@ func _step_approach(dt: float) -> void:
 		if aircraft.x > airfield.rwy_end + 4.0 and not DebugFlags.god_enabled():
 			_crash(_flew_past_text())
 			return
-	# no go-around: once the plane has been low, climbing well clear again is a go-around attempt - which is a crash
 	var agl := aircraft.agl()
+	# the 50 ft gate: the approach speed is judged here
+	if _gate_dev_kt == INF and agl <= Units.units_of_ft(Tuning.gate_height_ft) and aircraft.vy < 0.0:
+		_gate_dev_kt = aircraft.airspeed_kt() - Planes.vref(plane_id)
+	# instrument approach: the PAPI is the glide-path guidance (all lights one colour = a full dot off); the runway appears at minimums
+	if airfield.instrument:
+		if airfield.papi_white == 0 or airfield.papi_white == 4:
+			_papi_run += dt
+			_papi_worst = maxf(_papi_worst, _papi_run)
+		else:
+			_papi_run = 0.0
+		if agl <= airfield.dh:
+			if _instr_open == 0.0:
+				hud.flash_warning("MINIMUMS - runway in sight", Color(0.6, 1.0, 0.7))
+			_instr_open = minf(_instr_open + dt * 1.6, 1.0)
+	# no go-around: once the plane has been low, climbing well clear again is a go-around attempt - which is a crash
 	_min_agl = minf(_min_agl, agl)
 	if _min_agl < Tuning.go_around_low and agl > _min_agl + Tuning.go_around_climb and not DebugFlags.god_enabled():
 		_crash("No go-around!")
@@ -602,6 +658,18 @@ func _overrun_text() -> String:
 
 func _step_rollout(dt: float) -> void:
 	wind.update(dt, rng, _gust_scale * 0.3)
+	if aircraft.nose_hold:
+		aircraft.ground_pitch(dt)
+		if aircraft.gs > _touch_gs * Tuning.soft_release:
+			if aircraft.theta_target < Tuning.soft_nose_deg and _nose_ok:
+				_nose_ok = false
+				hud.flash_warning("NOSE DOWN TOO EARLY!", Color(1.0, 0.5, 0.35))
+		else:
+			aircraft.nose_hold = false
+		_bump_t -= dt
+		if _bump_t <= 0.0 and not DebugFlags.off("shake"):
+			_bump_t = 0.3
+			_shake = maxf(_shake, 0.12)       # rough grass
 	var decel := airfield.surface_decel() * aircraft.p_decel
 	var n := maxi(ceili(dt / Tuning.sim_step), 1)
 	var h := dt / float(n)
@@ -639,7 +707,7 @@ func _touchdown() -> void:
 	var rough := airfield.surface == Airfield.WATER and not airfield.in_lane(px)
 	if rough:
 		sink *= Tuning.water_rough_mult    # rough water outside the calm lane: a much harder landing
-	if Grading.is_crash_sink(sink) and not DebugFlags.god_enabled():
+	if Grading.is_crash_sink(sink, float(Planes.profile(plane_id)["tough"])) and not DebugFlags.god_enabled():
 		_crash("Too hard!" if airfield.on_runway(px) else _off_text())
 		return
 	if not airfield.on_runway(px) and not DebugFlags.god_enabled():
@@ -648,7 +716,7 @@ func _touchdown() -> void:
 	if airfield.has_wires and px > airfield.aim_x + Tuning.carrier_wire_half + 2.0 and not DebugFlags.god_enabled():
 		_crash("Missed the wires!")      # a bolter: there is no going around, so it is a crash
 		return
-	var bounced := sink > Tuning.bounce_sink * (0.5 if rough else 1.0)
+	var bounced := Grading.is_bounce_sink(sink, 0.5 if rough else 1.0)
 	if not _graded:
 		_graded = true
 		last_result = Grading.evaluate(sink, px - airfield.aim_x, airfield.rwy_len, bounced)
@@ -673,8 +741,8 @@ func _touchdown() -> void:
 		landings += 1
 		hud.set_score(score)
 		var g: int = last_result["grade"]
-		var sub := "Sink %.1f   %s%.0f m from the markers   %s   +%d%s" % [
-			sink, "+" if px >= airfield.aim_x else "", px - airfield.aim_x, "BOUNCED" if bounced else "no bounce", int(last_result["total"]),
+		var sub := "Sink %.1f ft/s   %s%.0f ft from the aim point   %s   +%d%s" % [
+			Units.fps(sink), "+" if px >= airfield.aim_x else "", Units.ft(px - airfield.aim_x), "BOUNCED" if bounced else "no bounce", int(last_result["total"]),
 			(" x%d = %d" % [mult, _awarded]) if mult > 1 else ""]
 		if _coins_award > 0:
 			sub += "   +%dc" % _coins_award
@@ -691,12 +759,7 @@ func _touchdown() -> void:
 		hud.set_hint("")
 		if g <= 1:
 			sfx.play(Sfx.CHIME, 1.0 + 0.12 * float(1 - g), -6.0)
-		if mode == RIDE:
-			var verdict := Career.judge(_ride_entry(), last_result, false)
-			if not verdict["pass"]:
-				ride_fails.append_array(verdict["fails"])
-				hud.flash_warning("STANDARD MISSED: " + str(verdict["fails"][0]), Color(1.0, 0.45, 0.35))
-		elif Save.data["rank"] < Career.max_rank() and Career.eligible(int(Save.data["rank"]), int(Save.data["career_points"])) and had_eligible == false:
+		if mode != RIDE and Save.data["rank"] < Career.max_rank() and Career.eligible(int(Save.data["rank"]), int(Save.data["career_points"])) and had_eligible == false:
 			hud.flash_warning("CHECKRIDE READY!", Color(0.5, 1.0, 0.6))
 	var power := clampf(0.25 + sink / 5.0, 0.2, 1.0)
 	fx.smoke(wheels, power, airfield.smoke_color())
@@ -711,6 +774,8 @@ func _touchdown() -> void:
 		aircraft.bounce(sink * Tuning.bounce_restitution * (1.35 if rough else 1.0))
 		return
 	aircraft.land()
+	_touch_gs = aircraft.gs
+	aircraft.nose_hold = airfield.soft
 	state = ROLLOUT
 	_timer = 0.0
 	_puff_t = 0.0
@@ -719,6 +784,7 @@ func _touchdown() -> void:
 
 func _crash(reason: String) -> void:
 	last_crash = reason
+	last_verdict = {"pass": false, "fails": ["Crashed: " + reason] as Array[String]}
 	strikes += 1
 	if streak > 0:
 		hud.streak_lost(streak)
@@ -756,6 +822,15 @@ func _leave_crash() -> void:
 
 ## The landing (or crash) is over: fade out, then a new approach (or the end of the run).
 func _finish_round(over: bool) -> void:
+	if state != CRASH and not last_result.is_empty() and _graded:
+		last_verdict = Standards.judge(_standard, judge_result(), false)
+		if mode != RIDE:
+			if last_verdict["pass"]:
+				hud.flash_warning("STANDARD MET", Color(0.5, 1.0, 0.6))
+			else:
+				hud.flash_warning("STANDARD MISSED: " + str(last_verdict["fails"][0]), Color(1.0, 0.55, 0.4))
+		elif not last_verdict["pass"]:
+			ride_fails.append_array(last_verdict["fails"])
 	if mode == DAILY:
 		over = true             # one approach
 	elif mode == RIDE:
@@ -858,7 +933,7 @@ func _apply_camera() -> void:
 
 func _update_hud(dt: float) -> void:
 	var flying := state == APPROACH
-	hud.set_flight(aircraft.agl(), aircraft.vy - aircraft.gs * airfield.slope_at(aircraft.x) if not aircraft.on_ground else 0.0, aircraft.s, flying and not hud.overlay_visible)
+	hud.set_flight(aircraft.agl(), aircraft.vy - aircraft.gs * airfield.slope_at(aircraft.x) if not aircraft.on_ground else 0.0, aircraft.s, Planes.vref(plane_id), flying and not hud.overlay_visible)
 	hud.set_papi(airfield.papi_white, _plane_screen_x(), flying and not _graded and not hud.overlay_visible)
 	if state == APPROACH or state == ROLLOUT:
 		hud.set_wind(wind.head())
@@ -874,11 +949,11 @@ func _update_distance() -> void:
 	var key := -1
 	var text := ""
 	if to_thr > 0.5:
-		key = int(roundf(to_thr))
-		text = "RUNWAY  %d m" % key
+		key = int(roundf(Units.ft(to_thr) / 10.0)) * 10
+		text = "RUNWAY  %d FT" % key
 	elif aircraft.x <= airfield.rwy_end:
-		key = 100000 + int(roundf(airfield.rwy_end - aircraft.x))
-		text = "ON RUNWAY  %d m left" % (key - 100000)
+		key = 1000000 + int(roundf(Units.ft(airfield.rwy_end - aircraft.x) / 10.0)) * 10
+		text = "ON RUNWAY  %d FT left" % (key - 1000000)
 	if key != _dist_key:
 		_dist_key = key
 		hud.set_distance(text)
@@ -898,7 +973,13 @@ func _update_fog() -> void:
 		haze = 0.07
 	if airfield.night:
 		col = col.darkened(0.9)
-	fog.set_fog(true, _plane_screen_x(), vs.x / maxf(_cam_w, 1.0), vs.x, Tuning.fog_start, airfield.vis_end, col, strength, haze)
+	var vis := airfield.vis_end
+	if airfield.instrument:
+		if _instr_open >= 0.999:
+			fog.set_fog(false, 0.0, 1.0, 1.0, 0.0, 1.0, Color.WHITE, 0.0)
+			return
+		vis = lerpf(airfield.vis_end, 700.0, _instr_open * _instr_open)      # the runway appears at minimums
+	fog.set_fog(true, _plane_screen_x(), vs.x / maxf(_cam_w, 1.0), vs.x, minf(Tuning.fog_start, vis * 0.4), vis, col, strength, haze)
 
 func _on_tuning_changed(property: String) -> void:
 	if property == "outline_thickness":
