@@ -184,7 +184,7 @@ func _begin_round() -> void:
 	aircraft.reset(0.0, airfield.start_altitude)
 	_start_x = aircraft.x
 	_compute_full_frame()
-	airfield.update_papi(aircraft.x, aircraft.y)
+	airfield.update_papi(aircraft.x, aircraft.y, true)
 	_dist_key = -1
 	_graded = false
 	_awarded = 0
@@ -456,6 +456,11 @@ func _closeness() -> float:
 
 func _snap_camera() -> void:
 	_update_camera(0.0, true)
+	hud.set_papi(airfield.papi_white, _plane_screen_x(), state == APPROACH and not _graded, true)
+
+## Where the plane is on screen (viewport pixels): the big PAPI follows it sideways.
+func _plane_screen_x() -> float:
+	return camera.unproject_position(Vector3(aircraft.x, aircraft.y + Aircraft.GEAR_H, 0.0)).x
 
 func _aspect() -> float:
 	var vs := get_viewport().get_visible_rect().size
@@ -494,6 +499,7 @@ func _apply_camera() -> void:
 func _update_hud(dt: float) -> void:
 	var flying := state == APPROACH
 	hud.set_flight(aircraft.y, aircraft.vy, aircraft.s, flying and not hud.overlay_visible)
+	hud.set_papi(airfield.papi_white, _plane_screen_x(), flying and not _graded and not hud.overlay_visible)
 	if state == APPROACH or state == ROLLOUT:
 		hud.set_wind(wind.head())
 		_update_distance()

@@ -219,12 +219,12 @@ func _make_beacon() -> Node3D:
 	_beacon_mats.append(m.material_override as StandardMaterial3D)
 	return root
 
-## PAPI: four housings in a row beside the aim markers, each with a lens facing the camera.
+## The small runway PAPI (scenery, mirrors the HUD one): four housings in a row beside the aim markers, lenses facing the camera.
 func _build_papi() -> void:
 	_papi_root = Node3D.new()
 	add_child(_papi_root)
 	for i in 4:
-		var h := _mi(_box, Color(0.3, 0.3, 0.34), true, _papi_root)
+		var h := _mi(_box, Color(0.36, 0.38, 0.42), false, _papi_root)
 		h.scale = Vector3(1.9, 1.9, 1.9)
 		h.position = Vector3((float(i) - 1.5) * 2.7, 0.95, 0.0)
 		var lens := _mi(_box, Color(1, 1, 1), false, _papi_root, true)
@@ -407,8 +407,7 @@ func _layout_markers() -> void:
 		_aim_posts[k].scale = Vector3.ONE * _mark
 		_end_posts[k].position = Vector3(rwy_end + 1.0, 0.0, side * edge)
 		_end_posts[k].scale = Vector3.ONE * _mark
-	_papi_root.position = Vector3(papi_x, 0.0, edge + 1.5 * _mark)
-	_papi_root.scale = Vector3.ONE * _mark
+	_papi_root.position = Vector3(papi_x, 0.0, edge + 1.5)   # (the small runway PAPI is scenery: it never scales with the zoom)
 	_sock_root.scale = Vector3.ONE * _mark
 	for b in _beacons:
 		b.scale = Vector3.ONE * _mark
@@ -499,15 +498,29 @@ func update(dt: float, cam_x: float, view_w: float, head: float) -> void:
 
 ## PAPI from where the plane is: the slope of the line from the plane to the PAPI against the slope of the path to the
 ## markers. Four lights, each turns white as the plane climbs above its step: all red = too low, two white + two red =
-## on the path, all white = too high. Holds its last state close in (the angle swings wildly right at the end).
-func update_papi(plane_x: float, plane_y: float) -> void:
+## on the path, all white = too high. A light needs to pass its step by papi_hysteresis (a fraction of papi_band) to
+## flip back, so turbulence around a step doesn't make it flicker. Holds its last state close in (the angle swings
+## wildly right at the end). `snap` ignores the hysteresis and the hold (used when a round starts).
+func update_papi(plane_x: float, plane_y: float, snap: bool = false) -> void:
 	var dx := papi_x - plane_x
-	if dx < Tuning.papi_hold_distance or plane_y <= 0.0:
+	if not snap and (dx < Tuning.papi_hold_distance or plane_y <= 0.0):
+		return
+	if dx <= 0.5:
 		return
 	var ratio := (plane_y / dx) / maxf(papi_slope, 0.01)
+	var h := Tuning.papi_hysteresis * Tuning.papi_band
 	var n := 0
 	for k in 4:
-		if ratio > 1.0 + (float(k) - 1.5) * Tuning.papi_band:
+		var step := 1.0 + (float(k) - 1.5) * Tuning.papi_band
+		var was_white := k < papi_white
+		var white: bool
+		if snap:
+			white = ratio > step
+		elif was_white:
+			white = ratio > step - h
+		else:
+			white = ratio > step + h
+		if white:
 			n += 1
 	if n != papi_white:
 		papi_white = n

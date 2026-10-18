@@ -185,6 +185,17 @@ var parallax_clouds := 0.15
 var papi_band := 0.12
 ## Inside this distance of the markers the lights hold their last state (the angle swings wildly right at the end).
 var papi_hold_distance := 20.0
+## A light flips back only after passing its step by this fraction of papi_band (stops flicker in turbulence).
+var papi_hysteresis := 0.15
+## The big HUD PAPI in the sky above the plane: light diameter and gap (screen pixels at the 1080 px wide layout),
+## height of the row as a fraction of the screen height, and the clearance kept from the screen edges.
+var papi_hud_size := 112.0
+var papi_hud_gap := 22.0
+var papi_hud_y := 0.27
+var papi_hud_margin := 24.0
+## How fast a light changes colour and how fast the row follows the plane sideways (per second; higher = snappier).
+var papi_hud_fade := 9.0
+var papi_hud_follow := 10.0
 
 # ---------- Start-up pre-warm ----------
 var prewarm_min_seconds := 1.5

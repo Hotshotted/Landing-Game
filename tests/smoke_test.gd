@@ -631,6 +631,136 @@ func run_all() -> void:
 	new_round(532, 1)
 	check(main.hud._hint.text.contains("PAPI"), "the round-1 hint explains the PAPI")
 
+	print("== 11. big HUD PAPI ==  [nodes %d]" % nodes())
+	root.size = Vector2i(540, 960)   # a phone-shaped window (the 1080 x 1920 layout, scaled)
+	await frames(3)
+	var hud = main.hud
+	var vs: Vector2 = hud.get_viewport().get_visible_rect().size
+	print("      viewport %s" % str(vs))
+	new_round(600, 2)
+	main.advance(1.0 / 60.0)
+	check(hud.papi_visible(), "the big PAPI shows during the approach")
+	check(is_equal_approx(hud._papi_lights[0].size.x, float(tn.papi_hud_size)) and hud._papi_lights.size() == 4, "four lights, sized from Tuning.papi_hud_size (%.0f px)" % float(tn.papi_hud_size))
+	check(float(tn.papi_hud_size) / vs.x >= 0.08, "big enough to read at a glance on a phone (a light is %.0f %% of the screen width)" % (100.0 * float(tn.papi_hud_size) / vs.x))
+	var rect: Rect2 = hud.papi_rect()
+	check(is_equal_approx(rect.size.x, 4.0 * float(tn.papi_hud_size) + 3.0 * float(tn.papi_hud_gap)), "the row is 4 lights + 3 gaps wide (%.0f px)" % rect.size.x)
+	check(rect.position.x >= 0.0 and rect.end.x <= vs.x, "the row is fully on screen at the start of the approach")
+	check(is_equal_approx(rect.position.y, vs.y * float(tn.papi_hud_y)), "its height comes from Tuning.papi_hud_y (%.2f of the screen)" % float(tn.papi_hud_y))
+	# in the empty sky: below the top readouts, above the plane - at the start and in the flare
+	var plane_px: Vector2 = main.camera.unproject_position(Vector3(main.aircraft.x, main.aircraft.y, 0.0))
+	check(rect.position.y > 230.0 * vs.y / 1920.0, "the row is below the top readouts (y %.0f of %.0f)" % [rect.position.y, vs.y])
+	check(rect.end.y + 50.0 * vs.y / 1920.0 < plane_px.y, "...and above the plane at the start (row bottom %.0f, plane y %.0f)" % [rect.end.y, plane_px.y])
+	var rows_clear := true
+	for dist_to_aim in [120.0, 60.0, 30.0]:
+		main.aircraft.reset(main.airfield.aim_x - dist_to_aim, 5.0 + dist_to_aim * 0.1)
+		for i in 90:
+			main.advance(1.0 / 60.0)
+			if main.state != MAIN.APPROACH:
+				break
+		var r2: Rect2 = hud.papi_rect()
+		var pp: Vector2 = main.camera.unproject_position(Vector3(main.aircraft.x, main.aircraft.y, 0.0))
+		if not (r2.end.y + 50.0 * vs.y / 1920.0 < pp.y):
+			rows_clear = false
+			print("      overlap: row bottom %.0f, plane y %.0f (alt %.1f)" % [r2.end.y, pp.y, main.aircraft.y])
+		if main.state != MAIN.APPROACH:
+			new_round(601, 2)
+	check(rows_clear, "...and stays above the plane through the approach and the flare")
+	# follows the plane sideways, always on screen
+	hud.set_papi(2, 420.0, true, true)
+	var cx_a: float = hud.papi_rect().get_center().x
+	hud.set_papi(2, 700.0, true)
+	for i in 90:
+		hud.update(1.0 / 60.0)
+	var cx_b: float = hud.papi_rect().get_center().x
+	check(absf(cx_a - 420.0) < 2.0 and absf(cx_b - 700.0) < 2.0, "the row follows the plane sideways (%.0f -> %.0f for plane x 420 -> 700)" % [cx_a, cx_b])
+	hud.set_papi(2, -300.0, true)
+	for i in 90:
+		hud.update(1.0 / 60.0)
+	check(hud.papi_rect().position.x >= 0.0, "...and never leaves the screen (plane far left: row x %.0f)" % hud.papi_rect().position.x)
+	hud.set_papi(2, 5000.0, true)
+	for i in 90:
+		hud.update(1.0 / 60.0)
+	check(hud.papi_rect().end.x <= vs.x + 0.5, "...either side")
+	# states and smooth transitions
+	hud.set_papi(2, 540.0, true, true)
+	check(hud.papi_light_color(0).g > 0.9 and hud.papi_light_color(1).g > 0.9 and hud.papi_light_color(2).g < 0.3 and hud.papi_light_color(3).g < 0.3, "on path: two white, two red")
+	hud.set_papi(4, 540.0, true)
+	hud.update(1.0 / 60.0)
+	var mid: Color = hud.papi_light_color(2)
+	check(mid.g > 0.2 and mid.g < 0.9, "a changing light is mid-transition after one frame (not a hard cut: g %.2f)" % mid.g)
+	for i in 60:
+		hud.update(1.0 / 60.0)
+	check(hud.papi_light_color(3).g > 0.95 and hud.papi_light_color(3).b > 0.9, "...and settles to white (too high: all four white)")
+	hud.set_papi(0, 540.0, true)
+	for i in 60:
+		hud.update(1.0 / 60.0)
+	check(hud.papi_light_color(0).g < 0.2 and hud.papi_light_color(3).g < 0.2 and hud.papi_light_color(0).r > 0.9, "too low: all four red")
+	check(hud._papi_caption.text == "TOO LOW", "the caption says so (%s)" % hud._papi_caption.text)
+	# the lights in the game follow the plane's real glide path
+	new_round(602, 2)
+	main.aircraft.reset(0.0, main.airfield.start_altitude * 1.8)
+	main.advance(1.0 / 60.0)
+	for i in 60:
+		main.advance(1.0 / 60.0)
+		main.aircraft.y = main.airfield.start_altitude * 1.8
+		main.aircraft.x = 0.0
+	check(main.airfield.papi_white == 4 and hud.papi_light_color(3).g > 0.9, "well above the glide path the HUD lights are all white")
+	for i in 60:
+		main.aircraft.y = main.airfield.start_altitude * 0.4
+		main.aircraft.x = 0.0
+		main.advance(1.0 / 60.0)
+	check(main.airfield.papi_white == 0 and hud.papi_light_color(0).g < 0.2, "well below it they are all red")
+	# hold-last-state near the markers
+	var held: int = main.airfield.papi_white
+	main.aircraft.reset(main.airfield.papi_x - 10.0, 30.0)
+	main.advance(1.0 / 60.0)
+	check(main.airfield.papi_white == held, "close to the markers the lights hold their last state")
+	# hysteresis: turbulence around a step doesn't flicker
+	var af5 = main.airfield
+	var dx5: float = 100.0
+	var px5: float = af5.papi_x - dx5
+	af5.update_papi(px5, 1.07 * af5.papi_slope * dx5, true)
+	var base_n: int = af5.papi_white
+	var flips := 0
+	var last_n: int = base_n
+	for i in 40:
+		var r := 1.062 + (0.01 if i % 2 == 0 else -0.01)
+		af5.update_papi(px5, r * af5.papi_slope * dx5)
+		if af5.papi_white != last_n:
+			flips += 1
+			last_n = af5.papi_white
+	check(base_n == 3 and flips == 0, "jitter around a step doesn't flicker a light (%d flips)" % flips)
+	af5.update_papi(px5, 1.0 * af5.papi_slope * dx5)
+	check(af5.papi_white == 2, "a real drop through the step still changes it")
+	af5.update_papi(px5, 1.07 * af5.papi_slope * dx5)
+	check(af5.papi_white == 2, "...and it needs a clear rise to come back (hysteresis)")
+	af5.update_papi(px5, 1.09 * af5.papi_slope * dx5)
+	check(af5.papi_white == 3, "...which it then does")
+	# hidden once the wheels are down
+	main.state = MAIN.ROLLOUT
+	main._update_hud(0.016)
+	for i in 30:
+		hud.update(1.0 / 60.0)
+	check(not hud.papi_visible(), "the big PAPI goes away once the wheels are down")
+	main.state = MAIN.APPROACH
+	# the small runway PAPI is quiet scenery: no outlines, not scaled with the zoom
+	var small = main.airfield._papi_root
+	check(small.get_child(0).material_overlay == null and main.airfield._papi_root.scale == Vector3.ONE, "the small runway PAPI is scenery (no outline, never scaled up)")
+	# live tuning
+	var size0: float = tn.papi_hud_size
+	tn.papi_hud_size = 150.0
+	hud.set_papi(2, 540.0, true, true)
+	check(is_equal_approx(hud._papi_lights[0].size.x, 150.0) and is_equal_approx(hud.papi_rect().size.x, 4.0 * 150.0 + 3.0 * float(tn.papi_hud_gap)), "changing papi_hud_size in Tuning resizes the lights live")
+	tn.papi_hud_size = size0
+	hud.set_papi(2, 540.0, false, true)
+	for e in ["papi_hud_size", "papi_hud_gap", "papi_hud_y", "papi_hud_fade", "papi_hud_follow", "papi_hysteresis"]:
+		var in_panel := false
+		for ent in TP.ENTRIES:
+			if ent[0] == e:
+				in_panel = true
+		check(in_panel, "%s is in the ?tune panel" % e)
+	root.size = Vector2i(1152, 648)
+
 	print("== 9. debug flags / frame time ==  [nodes %d]" % nodes())
 	DF.parse(["nofx=smoke,shake", "perf", "round=4", "seed=9", "bogus"] as Array[String])
 	check(DF.off("smoke") and DF.off("shake") and not DF.off("popup"), "?nofx=smoke,shake switches just those off")

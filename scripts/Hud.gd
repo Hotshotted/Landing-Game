@@ -18,6 +18,21 @@ var _stall_mark: ColorRect
 var _speed_label: Label
 var _gust: Label
 var _dist: Label
+# the big PAPI in the sky above the plane (four round lights + a caption), animated in update()
+var _papi_row: Control
+var _papi_back: Panel
+var _papi_lights: Array[Panel] = []
+var _papi_styles: Array[StyleBoxFlat] = []
+var _papi_cols: Array[Color] = []          # the colours the lights are showing right now (they ease toward the target)
+var _papi_pop := PackedFloat32Array([0.0, 0.0, 0.0, 0.0])
+var _papi_caption: Label
+var _papi_target := 2                      # how many lights should be white
+var _papi_shown_n := -1
+var _papi_x := 540.0                       # row centre, screen pixels (eases toward _papi_x_target)
+var _papi_x_target := 540.0
+var _papi_alpha := 0.0
+var _papi_show := false
+var _papi_built_size := -1.0
 var _hint: Label
 var _pop_title: Label
 var _pop_sub: Label
@@ -100,6 +115,34 @@ func _ready() -> void:
 	_pop_sub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_pop_title.modulate.a = 0.0
 	_pop_sub.modulate.a = 0.0
+	# the big PAPI: a dark pill with four round lights and a caption, in the empty sky above the plane
+	_papi_row = Control.new()
+	_papi_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_papi_row.visible = false
+	add_child(_papi_row)
+	_papi_back = Panel.new()
+	_papi_back.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var back_style := StyleBoxFlat.new()
+	back_style.bg_color = Color(0.04, 0.06, 0.1, 0.5)
+	back_style.set_corner_radius_all(48)
+	_papi_back.add_theme_stylebox_override("panel", back_style)
+	_papi_row.add_child(_papi_back)
+	for i in 4:
+		var light := Panel.new()
+		light.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var st := StyleBoxFlat.new()
+		st.bg_color = Color(1, 1, 1)
+		st.border_color = Color(0, 0, 0, 0.95)
+		light.add_theme_stylebox_override("panel", st)
+		_papi_row.add_child(light)
+		_papi_lights.append(light)
+		_papi_styles.append(st)
+		_papi_cols.append(Color(1, 1, 1))
+	_papi_caption = _label(34, HORIZONTAL_ALIGNMENT_CENTER)
+	remove_child(_papi_caption)
+	_papi_row.add_child(_papi_caption)
+	_papi_caption.text = "ON PATH"
+	_papi_shown_n = 2
 	# menu / game-over overlay
 	_overlay = ColorRect.new()
 	_overlay.color = Color(0.05, 0.08, 0.14, 0.62)
@@ -275,6 +318,94 @@ func set_fade_now(v: float) -> void:
 func fade_alpha() -> float:
 	return _fade.color.a
 
+# ---------- the big PAPI ----------
+
+const PAPI_WHITE := Color(0.98, 0.98, 0.94)
+const PAPI_RED := Color(1.0, 0.13, 0.1)
+const PAPI_CAPTIONS: Array[String] = ["TOO LOW", "A LITTLE LOW", "ON PATH", "A LITTLE HIGH", "TOO HIGH"]
+
+## Feed the PAPI: `white` = how many of the four lights are white (4 = too high, 2 = on path, 0 = too low), `screen_x` =
+## where the plane is on screen (the row follows it sideways), `show` = visible (during the approach). `snap` jumps
+## there at once (a new round).
+func set_papi(white: int, screen_x: float, show: bool, snap: bool = false) -> void:
+	_papi_target = clampi(white, 0, 4)
+	_papi_x_target = screen_x
+	_papi_show = show
+	if snap:
+		_papi_x = screen_x
+		_papi_alpha = 1.0 if show else 0.0
+		for i in 4:
+			_papi_cols[i] = PAPI_WHITE if i < _papi_target else PAPI_RED
+			_papi_pop[i] = 0.0
+		_papi_shown_n = -1
+		_papi_row.visible = show
+		_layout_papi(0.0)
+
+## The colour light `i` is showing right now (it eases toward its target, so mid-change it is a blend).
+func papi_light_color(i: int) -> Color:
+	return _papi_cols[i]
+
+## The row's screen rectangle (tests and layout checks).
+func papi_rect() -> Rect2:
+	return Rect2(_papi_row.position, _papi_row.size)
+
+func papi_visible() -> bool:
+	return _papi_row.visible and _papi_alpha > 0.5
+
+func _layout_papi(dt: float) -> void:
+	var sz := Tuning.papi_hud_size
+	var gap := Tuning.papi_hud_gap
+	var w := 4.0 * sz + 3.0 * gap
+	var pad := 18.0
+	var vs := get_viewport().get_visible_rect().size
+	# follow the plane sideways, always fully on screen
+	var k := 1.0 - exp(-Tuning.papi_hud_follow * dt) if dt > 0.0 else 1.0
+	_papi_x = lerpf(_papi_x, _papi_x_target, k)
+	var half := w * 0.5 + pad + Tuning.papi_hud_margin
+	var cx := clampf(_papi_x, minf(half, vs.x * 0.5), maxf(vs.x - half, vs.x * 0.5))
+	_papi_row.position = Vector2(cx - w * 0.5, vs.y * Tuning.papi_hud_y)
+	_papi_row.size = Vector2(w, sz)
+	_papi_back.position = Vector2(-pad, -pad)
+	_papi_back.size = Vector2(w + 2.0 * pad, sz + 2.0 * pad + 44.0)
+	if sz != _papi_built_size:                 # (live-tuned size: reshape the round lights)
+		_papi_built_size = sz
+		for st in _papi_styles:
+			st.set_corner_radius_all(int(sz * 0.5))
+			st.set_border_width_all(maxi(int(sz * 0.07), 3))
+	for i in 4:
+		var light := _papi_lights[i]
+		light.size = Vector2(sz, sz)
+		light.position = Vector2(float(i) * (sz + gap), 0.0)
+		light.pivot_offset = Vector2(sz, sz) * 0.5
+		var pop := 1.0 + 0.16 * _papi_pop[i]
+		light.scale = Vector2(pop, pop)
+		_papi_styles[i].bg_color = _papi_cols[i]
+	_papi_caption.position = Vector2(0.0, sz + 8.0)
+	_papi_caption.size = Vector2(w, 40.0)
+
+func _update_papi(dt: float) -> void:
+	_papi_alpha = move_toward(_papi_alpha, 1.0 if _papi_show else 0.0, dt / 0.2)
+	_papi_row.visible = _papi_alpha > 0.01
+	if not _papi_row.visible:
+		return
+	_papi_row.modulate.a = _papi_alpha
+	# colours ease toward white / red: a change is easy to see (and pops a little) but never flickers
+	var ck := 1.0 - exp(-Tuning.papi_hud_fade * dt)
+	for i in 4:
+		var goal := PAPI_WHITE if i < _papi_target else PAPI_RED
+		_papi_cols[i] = _papi_cols[i].lerp(goal, ck)
+		_papi_pop[i] = maxf(_papi_pop[i] - dt * 4.0, 0.0)
+	if _papi_target != _papi_shown_n:
+		if _papi_shown_n >= 0:
+			var lo := mini(_papi_target, _papi_shown_n)
+			var hi := maxi(_papi_target, _papi_shown_n)
+			for i in range(lo, hi):
+				_papi_pop[i] = 1.0
+		_papi_shown_n = _papi_target
+		_papi_caption.text = PAPI_CAPTIONS[_papi_target]
+		_papi_caption.modulate = PAPI_RED.lerp(PAPI_WHITE, 0.55) if _papi_target != 2 else Color(0.6, 1.0, 0.65)
+	_layout_papi(dt)
+
 # ---------- per frame ----------
 
 func update(delta: float) -> void:
@@ -296,6 +427,7 @@ func update(delta: float) -> void:
 	_fade.color.a = move_toward(_fade.color.a, _fade_target, delta / maxf(Tuning.fade_time, 0.01))
 	if overlay_visible:
 		_ov_prompt.modulate.a = 0.55 + 0.45 * sin(_t * 4.0)
+	_update_papi(delta)
 	_update_perf(delta)
 
 # ---------- ?perf ----------
@@ -341,6 +473,7 @@ func begin_prewarm() -> void:
 		_pop_title.modulate.a = 1.0
 		_pop_sub.modulate.a = 1.0
 	_gust.modulate.a = 1.0
+	set_papi(2, 540.0, true, true)   # the big PAPI is drawn for real too
 
 func prewarm_popups() -> void:
 	for g in Grading.NAMES:
@@ -348,6 +481,7 @@ func prewarm_popups() -> void:
 	_pop_title.text = "Greaser!"
 
 func end_prewarm() -> void:
+	set_papi(2, 540.0, false, true)
 	_splash.visible = false
 	_set_overlay(false)
 	clear_popup()
