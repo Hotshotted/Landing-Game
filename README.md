@@ -31,3 +31,7 @@ Flags are listed under the build stamp (bottom-left).
   commit-stamped name, and deploys to Pages. The build stamp (commit + UTC time) is in the corner; the page hops to the newest
   deploy if a stale copy is cached.
 - `tests/balance_sim.gd` flies autopilots over many rounds and prints how landings grade (for tuning, not run by CI).
+
+## Deploying
+
+Pushes to `main` build and deploy through GitHub Pages (Settings -> Pages -> Source: GitHub Actions).
