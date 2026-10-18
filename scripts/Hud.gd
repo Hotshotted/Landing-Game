@@ -240,7 +240,7 @@ func _ready() -> void:
 	card_back.anchor_right = 1.0
 	card_back.anchor_top = 0.27
 	card_back.anchor_bottom = 0.27
-	card_back.offset_bottom = 520
+	card_back.offset_bottom = 780
 	_card_root.add_child(card_back)
 	_card_title = _label(104, HORIZONTAL_ALIGNMENT_CENTER)
 	remove_child(_card_title)
@@ -258,7 +258,7 @@ func _ready() -> void:
 	remove_child(_card_blurb)
 	_card_root.add_child(_card_blurb)
 	_card_blurb.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_place(_card_blurb, 0.5, 0.27, -440, 270, 880, 220)
+	_place(_card_blurb, 0.5, 0.27, -460, 262, 920, 500)
 	# the aircraft selector (shown on the menu and game-over screens)
 	_sel_row = Control.new()
 	_sel_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -928,6 +928,7 @@ func show_card(title: String, sub: String, blurb: String, color: Color) -> void:
 	_card_title.add_theme_color_override("font_color", color)
 	_card_sub.text = sub
 	_card_blurb.text = blurb
+	_card_blurb.add_theme_font_size_override("font_size", 40 if blurb.length() < 150 else 30)
 	_card_t = 0.0
 	_card_on = true
 	_card_root.visible = true

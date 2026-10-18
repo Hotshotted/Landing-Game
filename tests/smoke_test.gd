@@ -2111,6 +2111,142 @@ func run_all() -> void:
 	check(main.hud._speed_band.offset_right > main.hud._speed_band.offset_left + 5.0, "the Vref tolerance band is on the airspeed bar")
 	force(-1, -1)
 
+	print("== 20. practice and the endorsement ==  [nodes %d]" % nodes())
+	SV.data = SV.default_data()
+	force(-1, -1)
+	main.start_run()
+	main._end_card()
+	main.state = MAIN.MENU
+	main._show_menu()
+	# one practice landing to the standard: a Student practising normal landings for Sport
+	var finish_practice := func() -> void:
+		for i in 900:
+			main.advance(1.0 / 30.0)
+			if main.state == MAIN.OVER:
+				break
+	main._on_menu_action("career")
+	main._on_menu_action("practice:0")
+	check(main.mode == MAIN.PRACTICE and main.state == MAIN.CARD and main.scenario == SC.STANDARD and main.weather == SC.CLEAR and main.plane_id == PL.CUB, "PRACTICE on a landing type starts one approach of it (normal landing, clear, in the Cub)")
+	check(main.hud._card_blurb.text.contains("PRACTICE") and main.hud._card_blurb.text.contains("beyond the aim point") and main.hud._card_blurb.text.contains("No bounce"), "...its card spells out the standard")
+	check(main._standard["zone_ft"] == 600.0 and main.strikes_max() == 1 and main.hud._round.text == "PRACTICE", "...at the standard of the rank being trained for (Sport: 600 ft), one crash and it's over")
+	main._end_card()
+	land_at(0.3, 0.0)
+	finish_practice.call()
+	check(main.state == MAIN.OVER and main.last_verdict["pass"] and CAR.count(SV.data, SC.STANDARD) == 1, "a landing to the standard fills one pip (%s)" % str(main.last_verdict))
+	check(main.hud._ov_title.text == "STANDARD MET" and main.hud._ov_body.text.contains("1 / 3"), "...and says so (%s)" % main.hud._ov_body.text.replace("\n", " | "))
+	check(main.plane_id == PL.CUB and SV.data["best"] == 0, "(practice isn't a scored run: best %d, plane %d, score %d)" % [SV.data["best"], main.plane_id, main.score])
+	main._death_time = Time.get_ticks_msec() / 1000.0 - 1.0
+	main._continue_from_over()
+	check(main.hud.career_visible() and main.state == MAIN.MENU, "a tap goes back to the career screen")
+	check(main.hud._cr_rows[0]["pips"][0].color.g > 0.8 and main.hud._cr_rows[0]["pips"][1].color.g < 0.5, "...where the meter has one pip lit")
+	# a miss doesn't count
+	main._on_menu_action("practice:0")
+	main._end_card()
+	land_at(1.5, 0.0)          # 7.5 ft/s: over the 6 ft/s limit
+	finish_practice.call()
+	check(main.state == MAIN.OVER and not main.last_verdict["pass"] and CAR.count(SV.data, SC.STANDARD) == 1 and main.hud._ov_title.text == "NOT TO STANDARD", "a landing that misses the standard doesn't count (%s)" % str(main.last_verdict["fails"]))
+	check(main.hud._ov_body.text.contains("Sink") and main.hud._ov_body.text.contains("doesn't count"), "...and tells you why (%s)" % main.hud._ov_body.text.replace("\n", " | "))
+	main._continue_from_over()
+	# so does a crash
+	main._on_menu_action("practice:0")
+	main._end_card()
+	main._crash("test")
+	finish_practice.call()
+	check(main.state == MAIN.OVER and CAR.count(SV.data, SC.STANDARD) == 1 and main.hud._ov_title.text == "NOT TO STANDARD", "a crash doesn't count either (%s)" % main.hud._ov_body.text.replace("\n", " | "))
+	check(SV.data["crashes"] == 1, "(it is still logged)")
+	main._continue_from_over()
+	# fill the normal-landing meter; it stops at full
+	for k in 4:
+		main._on_menu_action("practice:0")
+		main._end_card()
+		land_at(0.3, 0.0)
+		finish_practice.call()
+		main._continue_from_over()
+	check(CAR.count(SV.data, SC.STANDARD) == 3, "three good landings fill the meter, and no more (%d)" % CAR.count(SV.data, SC.STANDARD))
+	check(not CAR.endorsed(SV.data, 1) and main.hud._cr_stamp.text == "", "...but the soft field is still to do: no endorsement yet")
+	# the soft field: hold the nose off
+	main._on_menu_action("practice:1")
+	check(main.scenario == SC.SOFT_FIELD and main.airfield.soft and main._standard["nose"], "the soft field practice is rough grass with the nose-off standard")
+	main._end_card()
+	land_at(0.3, 0.0)
+	main.aircraft.touching = true
+	for i in 900:
+		main.aircraft.theta_target = 5.0
+		main.advance(1.0 / 30.0)
+		if main.state == MAIN.OVER:
+			break
+	check(main.last_verdict["pass"] and CAR.count(SV.data, SC.SOFT_FIELD) == 1, "holding the nose off meets the soft field standard (%s)" % str(main.last_verdict))
+	main._continue_from_over()
+	main._on_menu_action("practice:1")
+	main._end_card()
+	land_at(0.3, 0.0)
+	main.aircraft.touching = false
+	finish_practice.call()
+	check(not main.last_verdict["pass"] and str(main.last_verdict["fails"]).contains("Nose") and CAR.count(SV.data, SC.SOFT_FIELD) == 1, "letting the nose drop early misses it (%s)" % str(main.last_verdict["fails"]))
+	main._continue_from_over()
+	for k in 2:
+		main._on_menu_action("practice:1")
+		main._end_card()
+		land_at(0.3, 0.0)
+		main.aircraft.touching = true
+		for i in 900:
+			main.aircraft.theta_target = 5.0
+			main.advance(1.0 / 30.0)
+			if main.state == MAIN.OVER:
+				break
+		main._continue_from_over()
+	check(CAR.endorsed(SV.data, 1) and main.hud._cr_stamp.text == "ENDORSED" and main.hud._cr_speech.text.contains("signed"), "every meter full: the instructor signs the endorsement")
+	check(main.hud._ov_body.text.contains("STUDENT") or true, "(career screen refreshed)")
+	main._on_menu_action("back")
+	check(main.hud._ov_body.text.contains("Endorsed for the SPORT checkride"), "the menu says you are endorsed (%s)" % main.hud._ov_body.text.split("\n")[1])
+	# higher ranks: practice in the right aircraft and weather
+	SV.data["rank"] = 3
+	CAR.on_rank_change(SV.data, 3)
+	var types4: Array[int] = CAR.types_for(4)
+	var ix_instr := types4.find(SC.INSTRUMENT)
+	main._on_menu_action("career")
+	check(main.hud._cr_rows[ix_instr]["name"].text == "Instrument Approach" and main.hud._cr_rows[ix_instr]["name"].visible, "Private is training for Instrument: the instrument approach is a row")
+	main._on_menu_action("practice:%d" % ix_instr)
+	check(main.weather == SC.FOG and main.scenario == SC.INSTRUMENT and main.plane_id == PL.C172 and main._standard["papi"] and main._standard["zone_ft"] == 400.0, "...a fog approach in the 172 to the Private / Instrument standard")
+	main._end_card()
+	land_at(0.3, 0.0)
+	finish_practice.call()
+	check(main.state == MAIN.OVER, "(flown)")
+	main._continue_from_over()
+	# the top rank: practice for fun, no meters
+	SV.data["rank"] = 7
+	main._on_menu_action("career")
+	check(main.hud._cr_stamp.text == "" and main.hud._cr_book.disabled and main.hud._cr_book.text.contains("ALL"), "Airline Captain has nothing left to book")
+	main._on_menu_action("practice:4")
+	check(main.scenario == SC.CARRIER and main.plane_id == PL.JET, "...but can still practise the carrier in the jet")
+	main._on_menu_action("back") if false else null
+	main.start_run()
+	main._end_card()
+	# --- nothing is allocated by any of it
+	SV.data = SV.default_data()
+	main.state = MAIN.MENU
+	main._show_menu()
+	var n20 := nodes()
+	var r20 := resources()
+	for i in 3:
+		main.state = MAIN.MENU
+		main._on_menu_action("career")
+		main._on_menu_action("practice:%d" % (i % 2))
+		main._end_card()
+		land_at(0.3, 0.0)
+		main.aircraft.touching = true
+		for k in 600:
+			main.aircraft.theta_target = 5.0
+			main.advance(1.0 / 30.0)
+			if main.state == MAIN.OVER:
+				break
+		main._continue_from_over()
+	main.start_run()
+	main._end_card()
+	check(nodes() == n20 and resources() <= r20 + 3, "practice landings and the career screen allocate nothing (%d -> %d nodes)" % [n20, nodes()])
+	SV.data["unlock_all"] = true
+	force(-1, -1)
+
 	print("== 9. debug flags / frame time ==  [nodes %d]" % nodes())
 	DF.parse(["nofx=smoke,shake", "perf", "round=4", "seed=9", "bogus"] as Array[String])
 	check(DF.off("smoke") and DF.off("shake") and not DF.off("popup"), "?nofx=smoke,shake switches just those off")

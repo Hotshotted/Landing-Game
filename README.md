@@ -105,3 +105,11 @@ Private - normal, short, soft, engine out, night; Instrument - adds instrument a
 tolerances, unlocks the twin; CFI - all the landing types at Commercial standards (adds mountain strip, seaplane, flatbed; the glider);
 Airline Captain - the jet, instrument approaches, the carrier. Weather opens up with the ranks (rain / turbulence at Private, fog at
 Instrument, wind shear at Commercial). The save is version 2: a version 1 save's six ranks move onto the new ladder.
+
+## Practice and the endorsement (career update, part 3)
+
+The career screen lists the landing types of the rank you are training for, each with a proficiency meter (3 pips, `proficiency_needed`)
+and a PRACTICE button. A practice landing is one approach in a suitable aircraft (the newest one is likelier) flown to that rank's
+standard; meeting every standard fills a pip, while a miss or a crash doesn't count and says why. Meters earned at the same standard
+tier carry over to the next rank, a new tier starts them again. When every meter is full the instructor (Captain Wiggins, a small
+flat portrait) signs an endorsement - the checkride can then be booked. `?tune`: Promote rank, Fill meters, +500 coins.

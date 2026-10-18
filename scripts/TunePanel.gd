@@ -11,7 +11,7 @@ extends Node
 signal changed(property: String)
 ## "Next round" pressed.
 signal skip_round
-signal debug_action(id: String)      # career debug: unlock_all, plane, reset_save, promote, coins
+signal debug_action(id: String)      # career debug: unlock_all, plane, reset_save, promote, coins, endorse
 
 ## [Tuning property, label, min, max, step]
 const ENTRIES := [
@@ -270,6 +270,10 @@ func build() -> void:
 	coin_btn.set_meta("debug", "coins")
 	coin_btn.pressed.connect(func(): debug_action.emit("coins"))
 	coin_row.add_child(coin_btn)
+	var endorse_btn := _make_button("Fill meters", 28)
+	endorse_btn.set_meta("debug", "endorse")
+	endorse_btn.pressed.connect(func(): debug_action.emit("endorse"))
+	coin_row.add_child(endorse_btn)
 	column.add_child(coin_row)
 	_out = _make_label("", 26, HORIZONTAL_ALIGNMENT_LEFT)
 	_out.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART

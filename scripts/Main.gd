@@ -5,7 +5,7 @@ extends Node3D
 ## Everything is built once in _ready (and pre-warmed behind a splash); restarts and new rounds reuse it.
 
 enum { MENU, APPROACH, ROLLOUT, CRASH, FADE, OVER, CARD, AD }
-enum { FREE, RIDE, DAILY }      # what the current run is: endless free flight, a checkride, or the daily approach
+enum { FREE, RIDE, DAILY, PRACTICE }      # what the current run is: endless free flight, a checkride, the daily approach, or one practice landing
 
 var rng := RandomNumberGenerator.new()
 var camera: Camera3D
@@ -27,6 +27,8 @@ var mode := FREE
 var ride_target := 0            # checkride: the rank it earns
 var ride_idx := 0               # checkride: which landing (0-based)
 var ride_fails: Array[String] = []
+var practice_entry: Dictionary = {}       # the practice landing being flown: {scn, wx, plane, seed, round}
+var _career_rng := RandomNumberGenerator.new()
 var ride_draw: Array[Dictionary] = []     # the checkride's landings, drawn when it is booked: {scn, wx, plane, seed, round}
 var ride_passed := false        # the finished checkride was passed
 var _apt_rng := RandomNumberGenerator.new()   # picks the airport name (its own stream, so the approach itself is unaffected)
@@ -95,6 +97,7 @@ func _ready() -> void:
 	else:
 		rng.randomize()
 	_apt_rng.randomize()
+	_career_rng.randomize()
 	if not DebugFlags.ads_enabled():
 		Ads.enabled = false
 	Save.load_data()
@@ -232,6 +235,8 @@ func start_run() -> void:
 	_coins_doubled = false
 	Ads.reset()
 	hud.set_ad_button("", false)
+	if not available_planes().has(plane_id):
+		select_plane(available_planes()[0])      # (e.g. after a reset: fly something you have)
 	score = 0
 	strikes = 0
 	landings = 0
@@ -256,8 +261,8 @@ func start_run() -> void:
 ## first (the plane waits); tests pass false.
 func _begin_round(card: bool = true) -> void:
 	var entry: Dictionary = {}
-	if mode == RIDE or mode == DAILY:
-		entry = _ride_entry() if mode == RIDE else Daily.for_day(_daily_day)
+	if mode == RIDE or mode == DAILY or mode == PRACTICE:
+		entry = _ride_entry() if mode == RIDE else (Daily.for_day(_daily_day) if mode == DAILY else practice_entry)
 		round_no = int(entry["round"])
 		rng.seed = int(entry["seed"])
 		select_plane(int(entry["plane"]), false)
@@ -311,7 +316,9 @@ func _begin_round(card: bool = true) -> void:
 	_shake = 0.0
 	_apply_environment()
 	state = APPROACH
-	if mode == DAILY:
+	if mode == PRACTICE:
+		hud.set_round_text("PRACTICE")
+	elif mode == DAILY:
 		hud.set_round_text("DAILY APPROACH")
 	elif mode == RIDE:
 		hud.set_round_text("CHECKRIDE %d/%d" % [ride_idx + 1, ride_draw.size()])
@@ -339,8 +346,8 @@ func _ramp_visible_for_test() -> bool:
 func _card_blurb(entry: Dictionary = {}) -> String:
 	var t: String = Airports.name_of(scenario, airport_idx) + "\n" + Scenarios.BLURBS[scenario]
 	if not entry.is_empty():
-		if mode == RIDE:
-			t += "\nStandards: " + ",  ".join(Standards.lines(_standard, Planes.vref(plane_id)))
+		if mode == RIDE or mode == PRACTICE:
+			t = ("PRACTICE  -  " if mode == PRACTICE else "") + t + "\n" + "\n".join(Standards.lines(_standard, Planes.vref(plane_id)))
 		else:
 			t = "DAILY APPROACH  " + Daily.label(_daily_day) + "\n" + t + "\nOne approach. Best score counts."
 	if weather != Scenarios.CLEAR:
@@ -364,6 +371,8 @@ func _announce() -> void:
 func _tier() -> int:
 	if mode == RIDE:
 		return Standards.tier_for_rank(ride_target)
+	if mode == PRACTICE:
+		return Standards.tier_for_rank(career_target())
 	return Standards.tier_for_rank(int(Save.data["rank"]))
 
 ## The result of the landing so far, as Standards.judge wants it.
@@ -422,7 +431,7 @@ func streak_multiplier() -> int:
 
 ## Crashes allowed in a run: three, but only one for the glider.
 func strikes_max() -> int:
-	if mode == RIDE or mode == DAILY:
+	if mode == RIDE or mode == DAILY or mode == PRACTICE:
 		return 1                  # a checkride or the daily: one crash and it's over
 	return mini(Tuning.strikes_max, Planes.attempts(plane_id))
 
@@ -827,7 +836,7 @@ func _finish_round(over: bool) -> void:
 				hud.flash_warning("STANDARD MISSED: " + str(last_verdict["fails"][0]), Color(1.0, 0.55, 0.4))
 		elif not last_verdict["pass"]:
 			ride_fails.append_array(last_verdict["fails"])
-	if mode == DAILY:
+	if mode == DAILY or mode == PRACTICE:
 		over = true             # one approach
 	elif mode == RIDE:
 		if not ride_fails.is_empty():
@@ -848,6 +857,9 @@ func _show_over() -> void:
 	_death_time = Time.get_ticks_msec() / 1000.0
 	if mode == DAILY:
 		_show_daily_result()
+		return
+	if mode == PRACTICE:
+		_show_practice_result()
 		return
 	if mode == RIDE:
 		_show_ride_result()
@@ -1069,7 +1081,7 @@ func career_info() -> Dictionary:
 	return {"body": "%s PILOT" % Career.rank_name(rank), "speech": speech, "endorsed": endorsed, "status": status, "rows": rows,
 		"practice": CAREER_PRACTICE, "book_text": book_text, "book": can_book and CAREER_BOOKING}
 
-const CAREER_PRACTICE := false      # (switched on by the practice landings)
+const CAREER_PRACTICE := true
 const CAREER_BOOKING := false       # (switched on by the checkrides)
 
 func _refresh_menu_buttons() -> void:
@@ -1088,6 +1100,13 @@ func _on_menu_action(id: String) -> void:
 			start_run()
 		"career":
 			hud.show_career(career_info())
+		_ when id.begins_with("practice:"):
+			var rows: Array = career_info()["rows"]
+			var ix := int(id.get_slice(":", 1))
+			if ix >= 0 and ix < rows.size():
+				_run_start_ms = Time.get_ticks_msec()
+				_paused_total_ms = 0
+				start_practice(int(rows[ix]["type"]))
 		"logbook":
 			hud.show_logbook(logbook_text(), Save.data["airports"], _slips_for_logbook())
 		"daily":
@@ -1190,6 +1209,14 @@ func debug_promote() -> void:
 	if state == MENU:
 		_show_menu()
 
+func debug_endorse() -> void:
+	for t in Career.types_for(career_target()):
+		for k in Career.needed():
+			Career.add_practice(Save.data, t)
+	Save.store()
+	if hud.career_visible():
+		hud.show_career(career_info())
+
 func debug_coins() -> void:
 	Save.add("coins", 500)
 	if hud.hangar_visible():
@@ -1220,6 +1247,72 @@ func _on_debug_action(id: String) -> void:
 			debug_coins()
 		"promote":
 			debug_promote()
+		"endorse":
+			debug_endorse()
+
+# ---------- practice landings ----------
+
+## One practice landing of `scn`, flown to the standard of the rank being trained for. Meeting the standard fills a proficiency
+## pip; a miss or a crash doesn't count.
+func start_practice(scn: int) -> void:
+	mode = PRACTICE
+	_over_kind = "practice"
+	practice_entry = Career.make_entry(scn, career_target(), _career_rng)
+	_saved_plane = plane_id
+	score = 0
+	strikes = 0
+	landings = 0
+	last_result = {}
+	last_crash = ""
+	last_verdict = {}
+	sim_time = 0.0
+	streak = 0
+	best_streak = 0
+	run_coins = 0
+	_coins_award = 0
+	hud.set_ad_button("", false)
+	hud.set_streak(0)
+	hud.hide_overlay()
+	hud.clear_popup()
+	hud.set_score(0)
+	hud.set_strikes(0, 1)
+	hud.set_fade_now(0.0)
+	fx.clear()
+	get_tree().paused = false
+	_begin_round()
+	_snap_camera()
+
+func _show_practice_result() -> void:
+	select_plane(_saved_plane, false)
+	hud.fade_to(0.0)
+	hud.clear_popup()
+	var scn := int(practice_entry["scn"])
+	var tgt := career_target()
+	var top := int(Save.data["rank"]) >= Career.max_rank()
+	var name_t: String = Scenarios.NAMES[scn].capitalize()
+	var verdict := last_verdict if not last_verdict.is_empty() else {"pass": false, "fails": ["No landing"] as Array[String]}
+	var title := ""
+	var body := ""
+	var color := Color(1.0, 0.55, 0.4)
+	if bool(verdict["pass"]):
+		title = "STANDARD MET"
+		color = Color(0.55, 1.0, 0.6)
+		if top:
+			body = "%s\nTo the %s standard." % [name_t, Career.rank_name(tgt)]
+		else:
+			var n := Career.add_practice(Save.data, scn)
+			body = "%s\nProficiency  %d / %d" % [name_t, n, Career.needed()]
+			if Career.endorsed(Save.data, tgt):
+				body += "\n\nEvery landing type is ready: the instructor signs your endorsement for the %s checkride!" % Career.rank_name(tgt)
+				sfx.play(Sfx.CHIME, 1.3, 0.0)
+	else:
+		title = "NOT TO STANDARD"
+		var why: Array = verdict["fails"]
+		body = "%s\n%s\n\nIt doesn't count." % [name_t, "\n".join(why.slice(0, 3))]
+	Save.store()
+	_refresh_menu_buttons()
+	_show_notice(title, body, "TAP FOR THE CAREER SCREEN", color)
+	_refresh_ad_button()
 
 # ---------- daily approach ----------
 
