@@ -11,6 +11,7 @@ extends Node
 signal changed(property: String)
 ## "Next round" pressed.
 signal skip_round
+signal debug_action(id: String)      # career debug: unlock_all, plane, reset_save, checkride
 
 ## [Tuning property, label, min, max, step]
 const ENTRIES := [
@@ -218,6 +219,29 @@ func build() -> void:
 	force_row.add_child(scn_btn)
 	force_row.add_child(wx_btn)
 	column.add_child(force_row)
+	var career_row := HBoxContainer.new()
+	career_row.add_theme_constant_override("separation", 20)
+	var unlock_btn := _make_button("Unlock all: " + ("ON" if Save.data["unlock_all"] else "OFF"), 28)
+	unlock_btn.set_meta("debug", "unlock_all")
+	unlock_btn.pressed.connect(func():
+		debug_action.emit("unlock_all")
+		unlock_btn.text = "Unlock all: " + ("ON" if Save.data["unlock_all"] else "OFF"))
+	var plane_btn := _make_button("Next aircraft", 28)
+	plane_btn.set_meta("debug", "plane")
+	plane_btn.pressed.connect(func(): debug_action.emit("plane"))
+	var ride_btn := _make_button("Checkride", 28)
+	ride_btn.set_meta("debug", "checkride")
+	ride_btn.pressed.connect(func(): debug_action.emit("checkride"); close())
+	var wipe_btn := _make_button("Reset save", 28)
+	wipe_btn.set_meta("debug", "reset_save")
+	wipe_btn.pressed.connect(func():
+		debug_action.emit("reset_save")
+		unlock_btn.text = "Unlock all: OFF")
+	career_row.add_child(unlock_btn)
+	career_row.add_child(plane_btn)
+	career_row.add_child(ride_btn)
+	career_row.add_child(wipe_btn)
+	column.add_child(career_row)
 	_out = _make_label("", 26, HORIZONTAL_ALIGNMENT_LEFT)
 	_out.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_out.custom_minimum_size = Vector2(0, 150)

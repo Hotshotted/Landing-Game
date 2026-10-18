@@ -5,6 +5,7 @@ extends Node3D
 ## Everything is built once in _ready (and pre-warmed behind a splash); restarts and new rounds reuse it.
 
 enum { MENU, APPROACH, ROLLOUT, CRASH, FADE, OVER, CARD }
+enum { FREE, RIDE }      # what the current run is: endless free flight, or a checkride
 
 var rng := RandomNumberGenerator.new()
 var camera: Camera3D
@@ -22,6 +23,16 @@ var weather := 0
 var plane_id := Planes.C172     # the aircraft in use
 var streak := 0                 # consecutive Greaser! landings
 var best_streak := 0
+var mode := FREE
+var ride_target := 0            # checkride: the rank it earns
+var ride_idx := 0               # checkride: which landing (0-based)
+var ride_fails: Array[String] = []
+var ride_passed := false        # the finished checkride was passed
+var _apt_rng := RandomNumberGenerator.new()   # picks the airport name (its own stream, so the approach itself is unaffected)
+var airport_idx := 0            # which named airport of this scenario this approach is at
+var _flight_acc := 0.0          # seconds flown since the last save
+var _over_kind := ""            # what the OVER screen shows: "run", "ride_fail", "ride_pass"
+var _saved_plane := Planes.C172
 var _min_agl := 9999.0          # lowest the plane has been above the ground this approach (for the no-go-around rule)
 
 var state := MENU
@@ -66,6 +77,8 @@ func _ready() -> void:
 		rng.seed = DebugFlags.seed_number()
 	else:
 		rng.randomize()
+	_apt_rng.randomize()
+	Save.load_data()
 	best = Save.load_best()
 	sun = DirectionalLight3D.new()
 	add_child(sun)
@@ -97,12 +110,17 @@ func _ready() -> void:
 	hud = Hud.new()
 	add_child(hud)
 	hud.plane_step.connect(_on_plane_step)
+	hud.menu_action.connect(_on_menu_action)
 	if DebugFlags.tune_enabled():
 		tune_panel = TunePanel.new()
 		add_child(tune_panel)
 		tune_panel.build()
 		tune_panel.changed.connect(_on_tuning_changed)
 		tune_panel.skip_round.connect(skip_round)
+		tune_panel.debug_action.connect(_on_debug_action)
+	plane_id = clampi(int(Save.data["plane"]), 0, Planes.COUNT - 1)
+	if not available_planes().has(plane_id):
+		plane_id = available_planes()[0]
 	if DebugFlags.plane_forced() >= 0:
 		plane_id = DebugFlags.plane_forced()
 	round_no = DebugFlags.first_round() - 1
@@ -175,12 +193,17 @@ func _prewarm() -> void:
 func _show_menu() -> void:
 	state = MENU
 	hud.hide_card()
-	hud.show_menu(best)
+	mode = FREE
+	hud.hide_logbook()
+	hud.show_menu(best, _career_text())
+	_refresh_menu_buttons()
 	hud.set_flight(0.0, 0.0, 1.0, false)
 	hud.set_hint("")
 
 ## Start a fresh run IN PLACE: nothing is reloaded, created or freed.
 func start_run() -> void:
+	mode = FREE
+	_over_kind = "run"
 	score = 0
 	strikes = 0
 	landings = 0
@@ -204,13 +227,27 @@ func start_run() -> void:
 ## Choose the scenario and weather, lay out the next runway and put the plane on its approach. `card` shows the title card
 ## first (the plane waits); tests pass false.
 func _begin_round(card: bool = true) -> void:
-	round_no += 1
-	var pick := Scenarios.pick(round_no, rng, _last_scenario, Planes.scenarios(plane_id), Planes.weather(plane_id))
-	scenario = pick.x
-	weather = pick.y
+	var entry: Dictionary = {}
+	if mode == RIDE:
+		entry = _ride_entry()
+		round_no = int(entry["round"])
+		rng.seed = int(entry["seed"])
+		select_plane(int(entry["plane"]), false)
+		scenario = int(entry["scn"])
+		weather = int(entry["wx"])
+	else:
+		round_no += 1
+		var scn_ok := _intersect(Planes.scenarios(plane_id), Career.scenarios(Save.data["rank"], Save.data["unlock_all"]))
+		var wx_ok := _intersect(Planes.weather(plane_id), Career.weather(Save.data["rank"], Save.data["unlock_all"]))
+		var pick := Scenarios.pick(round_no, rng, _last_scenario, scn_ok, wx_ok)
+		scenario = pick.x
+		weather = pick.y
 	_last_scenario = scenario
 	airfield.set_plane(plane_id)
 	airfield.generate(round_no, rng, scenario, weather)
+	if mode == RIDE:
+		_apt_rng.seed = int(entry["seed"]) + 7
+	airport_idx = Airports.pick(scenario, _apt_rng)
 	airfield.build()
 	var r := Tuning.ramp(round_no)
 	wind.reset(airfield.wind_base, rng, rng.randf_range(2.0, 3.5))
@@ -237,7 +274,10 @@ func _begin_round(card: bool = true) -> void:
 	_shake = 0.0
 	_apply_environment()
 	state = APPROACH
-	hud.set_round(round_no)
+	if mode == RIDE:
+		hud.set_round_text("CHECKRIDE %d/%d" % [ride_idx + 1, Career.ride_for(ride_target - 1)["landings"].size()])
+	else:
+		hud.set_round(round_no)
 	hud.set_runway("%s  %d m  %s" % [Airfield.SURFACE_NAMES[airfield.surface].to_upper(), int(airfield.rwy_len), _terrain_text()])
 	hud.set_scenario_text(_scenario_line())
 	hud.set_wind(wind.head())
@@ -249,20 +289,22 @@ func _begin_round(card: bool = true) -> void:
 		_gust_scale *= 1.3
 	if card:
 		state = CARD
-		hud.show_card(Scenarios.NAMES[scenario], Scenarios.WX_NAMES[weather] if weather != Scenarios.CLEAR else "", _card_blurb(), Scenarios.COLORS[scenario])
+		hud.show_card(Scenarios.NAMES[scenario], Scenarios.WX_NAMES[weather] if weather != Scenarios.CLEAR else "", _card_blurb(entry), Scenarios.COLORS[scenario])
 
 ## (tests) is the mountain ramp drawn?
 func _ramp_visible_for_test() -> bool:
 	return airfield._ramp_root.visible and airfield._plateau.visible
 
-func _card_blurb() -> String:
-	var t: String = Scenarios.BLURBS[scenario]
+func _card_blurb(entry: Dictionary = {}) -> String:
+	var t: String = Airports.name_of(scenario, airport_idx) + "\n" + Scenarios.BLURBS[scenario]
+	if not entry.is_empty():
+		t += "\nStandards: " + ",  ".join(Career.standard_lines(entry))
 	if weather != Scenarios.CLEAR:
 		t += "\n" + Scenarios.WX_BLURBS[weather]
 	return t
 
 func _scenario_line() -> String:
-	var t: String = Scenarios.NAMES[scenario]
+	var t: String = Airports.name_of(scenario, airport_idx)
 	if weather != Scenarios.CLEAR:
 		t += "  -  " + Scenarios.WX_NAMES[weather]
 	return t
@@ -314,21 +356,29 @@ func streak_multiplier() -> int:
 
 ## Crashes allowed in a run: three, but only one for the glider.
 func strikes_max() -> int:
+	if mode == RIDE:
+		return 1                  # a checkride: one crash and it's over
 	return mini(Tuning.strikes_max, Planes.attempts(plane_id))
 
 ## Switch aircraft (the menu / game-over selector). Takes effect on the next approach.
-func select_plane(id: int) -> void:
+func select_plane(id: int, remember: bool = true) -> void:
 	plane_id = clampi(id, 0, Planes.COUNT - 1)
+	if remember:
+		Save.data["plane"] = plane_id
 	aircraft.apply_plane(plane_id)
 	hud.set_plane_choice(plane_id)
 	hud.set_strikes(strikes, strikes_max())
 
-## The aircraft you may pick (all of them for now; the career unlocks them one by one).
+## The aircraft you may pick: the ones your rank has unlocked.
 func available_planes() -> Array[int]:
+	return Career.planes(int(Save.data["rank"]), bool(Save.data["unlock_all"]))
+
+func _intersect(a: Array[int], b: Array[int]) -> Array[int]:
 	var out: Array[int] = []
-	for i in Planes.COUNT:
-		out.append(i)
-	return out
+	for x in a:
+		if b.has(x):
+			out.append(x)
+	return out if not out.is_empty() else a
 
 func _on_plane_step(dir: int) -> void:
 	var list := available_planes()
@@ -423,6 +473,7 @@ func advance(dt: float) -> void:
 						_snap_camera()
 		if state == APPROACH or state == ROLLOUT:
 			sim_time += dt
+			_flight_acc += dt
 		_shake = maxf(_shake - Tuning.shake_decay * dt * (0.4 + _shake), 0.0)
 	aircraft.update_visual(dt)
 	_update_camera(dt)
@@ -576,6 +627,7 @@ func _touchdown() -> void:
 		last_result["bounced"] = bounced
 		var g0: int = last_result["grade"]
 		var had_streak := streak
+		var had_eligible := Career.eligible(int(Save.data["rank"]), int(Save.data["career_points"]))
 		if g0 == 0:
 			streak = mini(streak + 1, Tuning.streak_cap)     # a Greaser! extends the streak
 		elif g0 >= 3:
@@ -586,6 +638,7 @@ func _touchdown() -> void:
 		_awarded = int(last_result["total"]) * mult
 		last_result["points"] = _awarded
 		best_streak = maxi(best_streak, streak)
+		_record_landing(g0)
 		score += _awarded
 		landings += 1
 		hud.set_score(score)
@@ -606,6 +659,13 @@ func _touchdown() -> void:
 		hud.set_hint("")
 		if g <= 1:
 			sfx.play(Sfx.CHIME, 1.0 + 0.12 * float(1 - g), -6.0)
+		if mode == RIDE:
+			var verdict := Career.judge(_ride_entry(), last_result, false)
+			if not verdict["pass"]:
+				ride_fails.append_array(verdict["fails"])
+				hud.flash_warning("STANDARD MISSED: " + str(verdict["fails"][0]), Color(1.0, 0.45, 0.35))
+		elif Save.data["rank"] < Career.max_rank() and Career.eligible(int(Save.data["rank"]), int(Save.data["career_points"])) and had_eligible == false:
+			hud.flash_warning("CHECKRIDE READY!", Color(0.5, 1.0, 0.6))
 	var power := clampf(0.25 + sink / 5.0, 0.2, 1.0)
 	fx.smoke(wheels, power, airfield.smoke_color())
 	sfx.play(Sfx.SQUEAK, rng.randf_range(0.9, 1.15), -4.0 + minf(sink, 4.0))
@@ -631,10 +691,15 @@ func _crash(reason: String) -> void:
 	if streak > 0:
 		hud.streak_lost(streak)
 	streak = 0
+	Save.add("crashes", 1)
+	if mode == RIDE:
+		ride_fails.append("Crashed: " + reason)
 	score -= _awarded            # a landing that ends in a crash (bounce into trees) doesn't count
 	if _awarded > 0:
 		landings -= 1
 		hud.set_score(score)
+		if mode == FREE:
+			Save.add("career_points", -_awarded)
 	_awarded = 0
 	hud.set_strikes(strikes, strikes_max())
 	hud.popup("CRASH", reason, Color(1.0, 0.35, 0.3), Tuning.crash_pause)
@@ -655,6 +720,15 @@ func _leave_crash() -> void:
 
 ## The landing (or crash) is over: fade out, then a new approach (or the end of the run).
 func _finish_round(over: bool) -> void:
+	if mode == RIDE:
+		if not ride_fails.is_empty():
+			over = true
+		else:
+			ride_idx += 1
+			over = ride_idx >= Career.ride_for(ride_target - 1)["landings"].size()
+	Save.add("flight_seconds", _flight_acc)
+	_flight_acc = 0.0
+	Save.store()
 	_after_fade_over = over
 	state = FADE
 	_timer = 0.0
@@ -663,10 +737,17 @@ func _finish_round(over: bool) -> void:
 func _show_over() -> void:
 	state = OVER
 	_death_time = Time.get_ticks_msec() / 1000.0
+	if mode == RIDE:
+		_show_ride_result()
+		return
+	_over_kind = "run"
 	var new_best := score > best
 	if new_best:
 		best = score
 		Save.store_best(best)
+	Save.data["best_streak"] = maxi(int(Save.data["best_streak"]), best_streak)
+	Save.store()
+	_refresh_menu_buttons()
 	hud.fade_to(0.0)
 	hud.clear_popup()
 	hud.show_over(score, best, landings, new_best, best_streak)
@@ -807,4 +888,182 @@ func _input(event: InputEvent) -> void:
 		elif state == OVER and Time.get_ticks_msec() / 1000.0 - _death_time > 0.6:
 			_run_start_ms = Time.get_ticks_msec()
 			_paused_total_ms = 0
+			_continue_from_over()
+
+# ---------- career: ranks, checkrides, logbook ----------
+
+func _career_text() -> String:
+	var rank := int(Save.data["rank"])
+	var t := "%s PILOT\n" % Career.rank_name(rank)
+	if rank < Career.max_rank():
+		var need := Career.points_for_next(rank)
+		var pts := int(Save.data["career_points"])
+		if pts >= need:
+			t += "Checkride ready: %s\n" % Career.rank_name(rank + 1)
+		else:
+			t += "%d / %d points to the %s checkride\n" % [pts, need, Career.rank_name(rank + 1)]
+	t += "\n"
+	return t
+
+func can_take_checkride() -> bool:
+	var rank := int(Save.data["rank"])
+	return rank < Career.max_rank() and (Career.eligible(rank, int(Save.data["career_points"])) or bool(Save.data["unlock_all"]))
+
+func _refresh_menu_buttons() -> void:
+	var rank := int(Save.data["rank"])
+	if rank >= Career.max_rank():
+		hud.set_menu_button("ride", "ALL RANKS", false)
+	else:
+		hud.set_menu_button("ride", "CHECKRIDE", can_take_checkride())
+
+func _on_menu_action(id: String) -> void:
+	if state != MENU and state != OVER:
+		return
+	match id:
+		"fly":
+			_run_start_ms = Time.get_ticks_msec()
+			_paused_total_ms = 0
 			start_run()
+		"ride":
+			if can_take_checkride():
+				_run_start_ms = Time.get_ticks_msec()
+				_paused_total_ms = 0
+				start_checkride()
+		"logbook":
+			hud.show_logbook(logbook_text(), Save.data["airports"])
+		"back":
+			hud.hide_logbook()
+			if state == MENU:
+				_show_menu()
+			else:
+				_redraw_over()
+
+func logbook_text() -> String:
+	var g: Array = Save.data["grades"]
+	var secs := float(Save.data["flight_seconds"])
+	var rank := int(Save.data["rank"])
+	return "%s PILOT\nFlight time  %d:%02d h    Landings  %d    Crashes  %d\nGreaser! %d   Smooth %d   Good %d\nFirm %d   Hard %d\nBest run  %d    Best streak  x%d\nAirports stamped  %d / %d" % [
+		Career.rank_name(rank), int(secs / 3600.0), int(secs / 60.0) % 60, int(Save.data["landings"]), int(Save.data["crashes"]),
+		int(g[0]), int(g[1]), int(g[2]), int(g[3]), int(g[4]), int(Save.data["best"]), int(Save.data["best_streak"]),
+		(Save.data["airports"] as Dictionary).size(), Airports.count()]
+
+func _ride_entry() -> Dictionary:
+	var ride := Career.ride_for(ride_target - 1)
+	return ride["landings"][clampi(ride_idx, 0, ride["landings"].size() - 1)]
+
+## Take the checkride that earns `ride_target` (the next rank): a fixed set of landings, every one to standard.
+func start_checkride() -> void:
+	mode = RIDE
+	_over_kind = "ride"
+	ride_target = int(Save.data["rank"]) + 1
+	ride_idx = 0
+	ride_fails.clear()
+	ride_passed = false
+	_saved_plane = plane_id
+	score = 0
+	strikes = 0
+	landings = 0
+	last_result = {}
+	last_crash = ""
+	sim_time = 0.0
+	streak = 0
+	best_streak = 0
+	hud.set_streak(0)
+	hud.hide_overlay()
+	hud.clear_popup()
+	hud.set_score(0)
+	hud.set_strikes(0, 1)
+	hud.set_fade_now(0.0)
+	fx.clear()
+	get_tree().paused = false
+	_begin_round()
+	_snap_camera()
+
+func _show_ride_result() -> void:
+	var rec_rank := ride_target
+	hud.fade_to(0.0)
+	hud.clear_popup()
+	select_plane(_saved_plane, false)
+	if ride_fails.is_empty():
+		ride_passed = true
+		_over_kind = "ride_pass"
+		Save.record_checkride(rec_rank, true)
+		Save.data["rank"] = rec_rank
+		var lines := Career.unlock_lines(rec_rank)
+		hud.show_notice("%s!" % Career.rank_name(rec_rank), "Checkride passed.\n\n" + "\n".join(lines), "TAP TO CONTINUE", Color(0.55, 1.0, 0.6))
+		sfx.play(Sfx.CHIME, 1.3, 0.0)
+	else:
+		ride_passed = false
+		_over_kind = "ride_fail"
+		Save.record_checkride(rec_rank, false)
+		hud.show_notice("CHECKRIDE FAILED", "Landing %d of %d\n\n%s" % [ride_idx + 1, Career.ride_for(rec_rank - 1)["landings"].size(), "\n".join(ride_fails)], "TAP TO RETRY", Color(1.0, 0.45, 0.35))
+	Save.store()
+	_refresh_menu_buttons()
+	hud.set_menu_button("ride", "RETRY" if not ride_passed else "CHECKRIDE", can_take_checkride())
+
+func _redraw_over() -> void:
+	match _over_kind:
+		"run":
+			hud.show_over(score, best, landings, false, best_streak)
+		_:
+			_show_ride_result_again()
+
+func _show_ride_result_again() -> void:
+	if ride_passed:
+		hud.show_notice("%s!" % Career.rank_name(ride_target), "Checkride passed.\n\n" + "\n".join(Career.unlock_lines(ride_target)), "TAP TO CONTINUE", Color(0.55, 1.0, 0.6))
+	else:
+		hud.show_notice("CHECKRIDE FAILED", "\n".join(ride_fails), "TAP TO RETRY", Color(1.0, 0.45, 0.35))
+
+func _continue_from_over() -> void:
+	match _over_kind:
+		"ride_fail":
+			start_checkride()
+		"ride_pass":
+			_show_menu()
+		_:
+			start_run()
+
+## Count a graded landing in the logbook: totals, grade tally, airport stamp and (free flight) career points.
+func _record_landing(grade: int) -> void:
+	Save.add("landings", 1)
+	Save.add_grade(grade)
+	if mode == FREE:
+		Save.add("career_points", _awarded)
+	var id := Airports.id_of(scenario, airport_idx)
+	if Save.stamp_airport(id, Airports.name_of(scenario, airport_idx), int(Time.get_unix_time_from_system() / 86400.0)):
+		hud.flash_warning("NEW STAMP: " + Airports.name_of(scenario, airport_idx), Color(1.0, 0.85, 0.3))
+
+# ---------- debug (?tune) ----------
+
+func debug_unlock_all(on: bool) -> void:
+	Save.data["unlock_all"] = on
+	Save.store()
+	hud.set_plane_choice(plane_id)
+	_refresh_menu_buttons()
+
+func debug_cycle_plane() -> void:
+	var list := available_planes()
+	select_plane(list[(list.find(plane_id) + 1) % list.size()])
+
+func debug_reset_save() -> void:
+	Save.reset_all()
+	best = 0
+	plane_id = Planes.C172
+	select_plane(plane_id)
+	_refresh_menu_buttons()
+	if state == MENU:
+		_show_menu()
+
+func _on_debug_action(id: String) -> void:
+	match id:
+		"unlock_all":
+			debug_unlock_all(not bool(Save.data["unlock_all"]))
+		"plane":
+			debug_cycle_plane()
+		"reset_save":
+			debug_reset_save()
+		"checkride":
+			if state == MENU or state == OVER:
+				ride_target = int(Save.data["rank"]) + 1
+				if ride_target <= Career.max_rank():
+					start_checkride()

@@ -26,6 +26,15 @@ var _streak_pop := 0.0
 var _streak_lost_t := 0.0
 var _glow_level := 0.0
 signal plane_step(dir: int)
+signal menu_action(id: String)          # "fly", "ride", "logbook", "back" (more are added by the later phases)
+var _menu_row: Control
+var _menu_buttons := {}                 # id -> Button
+var _log_root: Control
+var _log_stamps: Array[Panel] = []
+var _log_stamp_names: Array[Label] = []
+var _log_back: Button
+var _log_on := false
+const STAMP_COLS := 3
 var _sel_row: Control
 var _sel_name: Label
 var _sel_info: Label
@@ -228,6 +237,8 @@ func _ready() -> void:
 	_place(_sel_prev, 0, 0.52, 24, 0, 120, 100)
 	_sel_next = _sel_button(">", 1)
 	_place(_sel_next, 0, 0.52, 936, 0, 120, 100)
+	_build_menu_buttons()
+	_build_logbook()
 	# menu / game-over overlay
 	_overlay = ColorRect.new()
 	_overlay.color = Color(0.05, 0.08, 0.14, 0.62)
@@ -272,7 +283,79 @@ func _ready() -> void:
 	_splash.visible = false
 	add_child(_splash)
 	move_child(_sel_row, _splash.get_index())     # (the aircraft selector sits above the dark overlay, below the splash)
+	move_child(_menu_row, _splash.get_index())
+	move_child(_log_root, _splash.get_index())
 	move_child(_stamp, get_child_count() - 1)
+
+## The buttons under the aircraft selector (menu and run-over screens). Built once; only shown / hidden / re-texted.
+func _build_menu_buttons() -> void:
+	_menu_row = Control.new()
+	_menu_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_menu_row.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_menu_row.visible = false
+	add_child(_menu_row)
+	var ids := ["fly", "ride", "logbook"]
+	var texts := ["FLY", "CHECKRIDE", "LOGBOOK"]
+	for i in ids.size():
+		var b := Button.new()
+		b.text = texts[i]
+		b.add_theme_font_size_override("font_size", 44)
+		var id: String = ids[i]
+		b.pressed.connect(func(): menu_action.emit(id))
+		_menu_row.add_child(b)
+		_place(b, 0, 0.78, 30 + i * 342, 0, 330, 120)
+		_menu_buttons[id] = b
+
+## Add a button to the menu row's second line (the later phases use this: daily approach, hangar).
+func add_menu_button(id: String, text: String, slot: int) -> void:
+	var b := Button.new()
+	b.text = text
+	b.add_theme_font_size_override("font_size", 44)
+	b.pressed.connect(func(): menu_action.emit(id))
+	_menu_row.add_child(b)
+	_place(b, 0, 0.78, 30 + slot * 342, 140, 330, 120)
+	_menu_buttons[id] = b
+
+func set_menu_button(id: String, text: String, enabled: bool = true) -> void:
+	var b: Button = _menu_buttons[id]
+	b.text = text
+	b.disabled = not enabled
+
+## The logbook: a grid of stamp slots (one per airport; blank until first landed at), built once.
+func _build_logbook() -> void:
+	_log_root = Control.new()
+	_log_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_log_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_log_root.visible = false
+	add_child(_log_root)
+	var n := Airports.count()
+	var rows := int(ceil(float(n) / float(STAMP_COLS)))
+	for i in n:
+		var pn := Panel.new()
+		pn.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var st := StyleBoxFlat.new()
+		st.bg_color = Color(0.1, 0.12, 0.18, 0.7)
+		st.set_border_width_all(3)
+		st.border_color = Color(0.4, 0.45, 0.55, 0.6)
+		st.set_corner_radius_all(10)
+		pn.add_theme_stylebox_override("panel", st)
+		_log_root.add_child(pn)
+		var col := i % STAMP_COLS
+		var row := i / STAMP_COLS
+		_place(pn, 0, 0.0, 30 + col * 342, 760 + row * 78, 330, 68)
+		var lb := _label(24, HORIZONTAL_ALIGNMENT_CENTER)
+		remove_child(lb)
+		pn.add_child(lb)
+		lb.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		lb.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		_log_stamps.append(pn)
+		_log_stamp_names.append(lb)
+	_log_back = Button.new()
+	_log_back.text = "BACK"
+	_log_back.add_theme_font_size_override("font_size", 48)
+	_log_back.pressed.connect(func(): menu_action.emit("back"))
+	_log_root.add_child(_log_back)
+	_place(_log_back, 0.5, 0.0, -170, 760 + rows * 78 + 20, 340, 110)
 
 func _sel_button(text: String, dir: int) -> Button:
 	var b := Button.new()
@@ -300,10 +383,12 @@ func set_plane_choice(id: int) -> void:
 
 ## Is this screen position on the aircraft selector (so a tap there doesn't start the run)?
 func over_selector(pos: Vector2) -> bool:
+	var vs := get_viewport().get_visible_rect().size
+	if _log_on:
+		return true
 	if not _sel_row.visible:
 		return false
-	var vs := get_viewport().get_visible_rect().size
-	return Rect2(0.0, vs.y * 0.52 - 10.0, vs.x, 280.0).has_point(pos)
+	return Rect2(0.0, vs.y * 0.52 - 10.0, vs.x, 280.0).has_point(pos) or Rect2(0.0, vs.y * 0.78 - 10.0, vs.x, 300.0).has_point(pos)
 
 ## Where the airspeed bar draws its stall mark (the aircraft's stall speed).
 func set_stall(v: float) -> void:
@@ -337,6 +422,9 @@ func set_score(v: int) -> void:
 
 func set_round(n: int) -> void:
 	_round.text = "ROUND %d" % n
+
+func set_round_text(t: String) -> void:
+	_round.text = t
 
 func set_strikes(n: int, max_n: int = 3) -> void:
 	for i in _strikes.size():
@@ -495,26 +583,75 @@ func clear_popup() -> void:
 
 # ---------- overlay / fade ----------
 
-func show_menu(best: int) -> void:
+func show_menu(best: int, career_text: String = "") -> void:
 	_set_overlay(true)
 	_ov_title.text = "GREASER"
 	_ov_title.add_theme_color_override("font_color", Color(1.0, 0.85, 0.2))
-	_ov_body.text = "Land it soft.\n\nDrag up / down to pitch the nose. Flare just before touchdown - too early and you float then drop, too late and you slam in.\n\nTouch down on the aim markers. Three crashes end the run. There are no go-arounds." + (("\n\nBest: %d" % best) if best > 0 else "")
-	_ov_prompt.text = "TAP TO START"
+	_ov_body.text = career_text + "Drag up / down to pitch the nose. Flare just before touchdown.\nTouch down on the aim markers. Three crashes end the run. No go-arounds." + (("\n\nBest: %d" % best) if best > 0 else "")
+	_ov_prompt.text = "TAP TO FLY"
+
+## A result screen (checkride passed / failed, rank-up): title, body and prompt.
+func show_notice(title: String, body: String, prompt: String, color: Color) -> void:
+	_set_overlay(true)
+	_ov_title.text = title
+	_ov_title.add_theme_font_size_override("font_size", 90)
+	_ov_title.add_theme_color_override("font_color", color)
+	_ov_body.text = body
+	_ov_prompt.text = prompt
+
+## The logbook screen. `stamped` maps airport id -> {"name", "day", "n"}.
+func show_logbook(body: String, stamped: Dictionary) -> void:
+	_log_on = true
+	_set_overlay(true)
+	_ov_title.text = "LOGBOOK"
+	_ov_title.add_theme_color_override("font_color", Color(0.95, 0.9, 0.7))
+	_ov_title.add_theme_font_size_override("font_size", 110)
+	_ov_body.text = body
+	_ov_prompt.text = ""
+	var list := Airports.all()
+	for i in list.size():
+		var a: Dictionary = list[i]
+		var st: StyleBoxFlat = _log_stamps[i].get_theme_stylebox("panel")
+		if stamped.has(a["id"]):
+			_log_stamp_names[i].text = "%s  x%d" % [a["name"], int(stamped[a["id"]]["n"])]
+			_log_stamp_names[i].modulate = Color(1, 0.95, 0.75)
+			st.border_color = Color(0.95, 0.75, 0.25, 0.95)
+			st.bg_color = Color(0.3, 0.2, 0.08, 0.75)
+		else:
+			_log_stamp_names[i].text = "- - -"
+			_log_stamp_names[i].modulate = Color(1, 1, 1, 0.35)
+			st.border_color = Color(0.4, 0.45, 0.55, 0.6)
+			st.bg_color = Color(0.1, 0.12, 0.18, 0.7)
+	_log_root.visible = true
+	_menu_row.visible = false
+	_sel_row.visible = false
+
+func hide_logbook() -> void:
+	_log_on = false
+	_log_root.visible = false
+	_ov_title.add_theme_font_size_override("font_size", 150)
+
+func logbook_visible() -> bool:
+	return _log_on
 
 func show_over(total: int, best: int, landings: int, new_best: bool, best_streak: int = 0) -> void:
 	_set_overlay(true)
 	_ov_title.text = "RUN OVER"
+	_ov_title.add_theme_font_size_override("font_size", 150)
 	_ov_title.add_theme_color_override("font_color", Color(1.0, 0.4, 0.35))
 	_ov_body.text = "Score  %d\nLandings  %d\nBest streak  x%d\n%s" % [total, landings, maxi(best_streak, 1) if best_streak > 0 else 0, "NEW BEST!" if new_best else "Best  %d" % best]
 	_ov_prompt.text = "TAP TO FLY AGAIN"
+	_menu_row.visible = true
 
 func hide_overlay() -> void:
 	_set_overlay(false)
 
 func _set_overlay(on: bool) -> void:
 	overlay_visible = on
+	if not on:
+		hide_logbook()
 	_sel_row.visible = on and not _splash.visible
+	_menu_row.visible = on and not _splash.visible and not _log_on
 	_overlay.visible = on
 	_ov_title.visible = on
 	_ov_body.visible = on
@@ -682,6 +819,10 @@ func begin_prewarm() -> void:
 	_splash.visible = true
 	_set_overlay(true)
 	_sel_row.visible = true     # (the selector's buttons are drawn behind the splash too)
+	_menu_row.visible = true
+	show_logbook("0123456789 Greaser", {})     # (and the logbook's stamps)
+	_log_root.visible = true
+	_menu_row.visible = true
 	_ov_title.text = "GREASER"
 	_ov_body.text = "0123456789 Greaser! Smooth Good Firm Hard CRASH Off the runway! Hit the trees!"
 	_ov_prompt.text = "TAP"
@@ -705,6 +846,7 @@ func end_prewarm() -> void:
 	_glow_level = 0.0
 	_glow.visible = false
 	_splash.visible = false
+	hide_logbook()
 	_set_overlay(false)
 	clear_popup()
 	_gust.modulate.a = 0.0

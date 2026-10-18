@@ -51,3 +51,14 @@ Flags are listed under the build stamp (bottom-left).
 ## Deploying
 
 Pushes to `main` build and deploy through GitHub Pages (Settings -> Pages -> Source: GitHub Actions).
+
+## Career and logbook (phase 4)
+
+Six ranks - Student, Private, Instrument, Commercial, CFI, Airline Captain. Points from free-flight landings open each rank's
+**checkride**: a fixed set of 3-5 landings (fixed scenario, weather, aircraft and runway) with standards - touch down within a
+zone of the markers, stay under a sink rate, no bounce. Miss any standard (or crash) and the checkride ends; retry it from
+landing 1. Pass and the rank rises, unlocking aircraft, scenarios and weather (Private: mountain strip, engine out, rain;
+Instrument: twin, night, fog; Commercial: glider, seaplane, truck, turbulence; CFI: wind shear; Airline Captain: jet and carrier).
+The **logbook** shows flight time, landings, crashes, the grade tally, best run / streak and one stamp per named airport
+(27 of them), earned the first time you land there. Everything is saved as one versioned JSON document (`Save.gd`, migrates the
+old best-score file; unreadable saves start fresh). `?tune` has Unlock all, Next aircraft, Checkride and Reset save buttons.
