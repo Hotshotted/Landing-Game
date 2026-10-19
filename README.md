@@ -122,3 +122,13 @@ reveals them one at a time on the title card, each flown to the rank's standard.
 fee is gone, a **pink slip** (date, rank, failed landing type) is stamped in the logbook for good, and the failed type's meter drops back
 to half - so you practise it again to be re-endorsed before a **retest**: a full checkride with a new random draw at the full fee.
 Pass and a certificate for the new rank is shown. `?screen=certificate|slip|career|logbook|hangar` opens a screen at start.
+
+## Approach pacing
+
+Every approach starts `approach_seconds` (default 7.5, a `?tune` slider) of descent on the 3 degree path before the touchdown point:
+the start altitude is that time x the aircraft's sink rate, so a faster aircraft starts further out but takes about the same time
+(172 ~150 u / 750 ft from the aim point, Cub ~120 u, twin ~210 u, jet ~325 u). With the flare and float an approach lasts about 10 s
+(the pre-realism pacing). Dead-stick approaches (engine out, power-off 180, the glider) get `dead_stick_time_mult` (1.3) times longer;
+an instrument approach starts 25 ft above its 100 ft decision height (so it is the longest: ~23 s in the 172, ~12 s in the jet - the
+decision height alone is 17 s of path at 65 kt); obstacles and a mountain ramp set how close a start can be. The opening frame is the
+wide framing showing the plane and the whole runway; the zoom tightens from there.

@@ -79,6 +79,7 @@ var _cam_dx := 0.0
 var _tilt := 9.0
 var _full_w := 120.0          # this round's wide framing (plane start .. runway end) ...
 var _full_left := 0.0         # ... and its left edge
+var _start_agl := 20.0          # the plane's height above the ground at the start of the approach
 var _start_x := 0.0           # where the plane started this approach
 var _dist_key := -1           # what the runway distance readout shows (rebuilt only when it changes)
 var _env: Environment
@@ -312,6 +313,7 @@ func _begin_round(card: bool = true) -> void:
 	aircraft.set_night(airfield.night)
 	aircraft.reset(0.0, airfield.start_altitude)
 	_start_x = aircraft.x
+	_start_agl = aircraft.agl()
 	_standard = Standards.for_type(scenario, _tier())
 	var vref := Planes.vref(plane_id)
 	hud.set_speed_band(1.0 - float(_standard["kt_minus"]) / vref, 1.0 + float(_standard["kt_plus"]) / vref)
@@ -914,7 +916,8 @@ func _closeness() -> float:
 	var d0 := maxf(airfield.aim_x - _start_x, 1.0)
 	var d := airfield.aim_x - aircraft.x
 	var by_dist := clampf((d0 - d) / maxf(d0 - Tuning.zoom_close_distance, 1.0), 0.0, 1.0)
-	var by_alt := clampf((Tuning.zoom_high_altitude - aircraft.agl()) / maxf(Tuning.zoom_high_altitude - Tuning.zoom_low_altitude, 1.0), 0.0, 1.0)
+	var hi := maxf(_start_agl, Tuning.zoom_low_altitude + 1.0)
+	var by_alt := clampf((hi - aircraft.agl()) / maxf(hi - Tuning.zoom_low_altitude, 0.5), 0.0, 1.0)
 	return smoothstep(0.0, 1.0, maxf(by_dist, by_alt))
 
 func _snap_camera() -> void:

@@ -475,7 +475,13 @@ func generate(round_no: int, rng: RandomNumberGenerator, scn: int = 0, wx: int =
 	# the plain approach path: sink / ground speed
 	var gs_app := maxf(Tuning.approach_speed * plane_speed - wind_base, 6.0)
 	path_slope = Tuning.approach_speed * plane_speed * tan(deg_to_rad(Tuning.glide_angle_deg)) * sink_mult * plane_sink / gs_app
-	start_altitude = path_slope * gs_app * Tuning.approach_seconds * rng.randf_range(0.85, 1.15) * (1.6 if instrument else 1.0) + deck_h
+	# Where the approach starts: `approach_seconds` of descent on the path above the touchdown point (the sink rate is speed x
+	# tan(path angle), so every aircraft gets about the same TIME, a faster one simply starts further out). Dead-stick approaches get
+	# a little longer. An instrument approach starts just above the decision height (the runway must be hidden for a while).
+	var t_app := Tuning.approach_seconds * (Tuning.dead_stick_time_mult if power == 0.0 else 1.0) * rng.randf_range(0.92, 1.08)
+	start_altitude = path_slope * gs_app * t_app + deck_h
+	if instrument:
+		start_altitude = maxf(start_altitude, dh + Units.units_of_ft(Tuning.instrument_start_ft_above_dh))
 	aim_off = clampf(rwy_len * Tuning.aim_fraction, Tuning.aim_min, Tuning.aim_max)
 	if scn == Scenarios.TRUCK:
 		aim_off = rwy_len * 0.45
@@ -493,13 +499,13 @@ func generate(round_no: int, rng: RandomNumberGenerator, scn: int = 0, wx: int =
 	var cap_off := rwy_len * 0.5
 	if terrain == TREES:
 		tree_count = rng.randi_range(3, 6)
-		var gap := rng.randf_range(10.0, 25.0)
-		var spacing := rng.randf_range(6.0, 9.0)
+		var gap := rng.randf_range(8.0, 18.0)
+		var spacing := rng.randf_range(5.0, 7.0)
 		for i in tree_count:
 			var rel := -gap - float(i) * spacing + rng.randf_range(-0.8, 0.8)
 			tree_x[i] = rel
 			tree_hw[i] = rng.randf_range(1.8, 2.6)
-			tree_h[i] = rng.randf_range(4.0, 8.0)
+			tree_h[i] = rng.randf_range(4.0, 8.0) * minf(plane_speed * 1.2, 1.0)      # (slower aircraft: lower trees, so the markers needn't move so far)
 			aim_off = maxf(aim_off, rel + (tree_h[i] + 2.5) / comfy)
 		if aim_off > cap_off:
 			aim_off = cap_off
@@ -507,8 +513,8 @@ func generate(round_no: int, rng: RandomNumberGenerator, scn: int = 0, wx: int =
 				tree_h[i] = clampf(minf(tree_h[i], (aim_off - tree_x[i]) * comfy - 2.5), 3.0, 8.0)
 	elif terrain == HILL:
 		hill_on = true
-		hill_hw = rng.randf_range(40.0, 70.0)
-		hill_x = -rng.randf_range(20.0, 40.0) - hill_hw
+		hill_hw = rng.randf_range(24.0, 40.0)
+		hill_x = -rng.randf_range(12.0, 24.0) - hill_hw
 		hill_h = rng.randf_range(5.0, 10.0)
 		aim_off = maxf(aim_off, hill_x + (hill_h + 2.5) / comfy)
 		if aim_off > cap_off:
@@ -531,17 +537,23 @@ func generate(round_no: int, rng: RandomNumberGenerator, scn: int = 0, wx: int =
 		path_error = maxf(path_error, need)
 	# Where the threshold has to be at the moment of touchdown so the plain path meets the ground (or the deck, or the
 	# slope) path_error from the markers; a moving deck is started further back by how far it travels meanwhile.
-	var lead := 80.0 if slope_m > 0.0 else 0.0
+	var lead := 80.0 * clampf(plane_speed, 0.6, 1.4) if slope_m > 0.0 else 0.0     # (a slow aircraft needs less run-up)
 	var gs_nom := maxf(Tuning.approach_speed * plane_speed - wind_base, 6.0)
 	var thr0 := 0.0
-	for attempt in 8:
+	# the plane has to start this far before the threshold: clear of the first obstacle (and the foot of a mountain ramp)
+	var min_thr0 := Tuning.min_start_distance + lead
+	for i in tree_count:
+		min_thr0 = maxf(min_thr0, -tree_x[i] + 20.0)
+	if hill_on:
+		min_thr0 = maxf(min_thr0, -(hill_x - hill_hw) + 20.0)
+	for attempt in 12:
 		var s := path_slope
 		var thr_t := (start_altitude - deck_h - (s + slope_m) * (aim_off + path_error) - slope_m * lead) / s
 		var x_t := thr_t + aim_off + path_error
 		thr0 = thr_t - deck_speed * x_t / gs_nom
-		if thr0 >= 120.0:
+		if thr0 >= min_thr0:
 			break
-		start_altitude += (120.0 - thr0) * s * 1.2 + 0.5     # too close: start a little higher instead
+		start_altitude += (min_thr0 - thr0) * s * 1.1 + 0.2     # too close: start a little higher instead
 	_thr0 = thr0
 	thr = thr0
 	rwy_end = thr + rwy_len

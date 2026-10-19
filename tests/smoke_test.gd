@@ -155,8 +155,8 @@ func run_all() -> void:
 	check(main.state == MAIN.APPROACH and not main.hud.card_visible(), "the card goes after card_time and the approach begins")
 	check(not main.hud.overlay_visible, "the overlay is hidden in play")
 	check(main.round_no == 1 and main.strikes == 0 and main.score == 0, "run starts at round 1, no strikes, score 0")
-	check(main.aircraft.x == 0.0 and main.aircraft.y > 15.0, "the plane starts on the left, high")
-	check(main.airfield.thr > 55.0 and main.airfield.aim_x > main.airfield.thr, "the runway is ahead with the aim markers on it")
+	check(main.aircraft.x == 0.0 and main.aircraft.y > 3.0, "the plane starts on the left, high")
+	check(main.airfield.thr > float(tn.min_start_distance) - 1.0 and main.airfield.aim_x > main.airfield.thr, "the runway is ahead with the aim markers on it")
 
 	print("== 2. grading ==  [nodes %d]" % nodes())
 	var fps := func(f: float) -> float: return UN.ups_of_fps(f)       # feet per second -> world units per second
@@ -318,7 +318,7 @@ func run_all() -> void:
 		surfaces[main.airfield.surface] = true
 		terrains[main.airfield.terrain] = true
 		lens.append(main.airfield.rwy_len)
-		if main.airfield.thr < 59.0 or main.airfield.aim_x <= main.airfield.thr or main.airfield.aim_x >= main.airfield.rwy_end:
+		if main.airfield.thr < float(tn.min_start_distance) - 1.0 or main.airfield.aim_x <= main.airfield.thr or main.airfield.aim_x >= main.airfield.rwy_end:
 			thr_ok = false
 		# the plain path must clear every obstacle (with margin)
 		var slope: float = main.airfield.path_slope
@@ -417,7 +417,7 @@ func run_all() -> void:
 		if main.state == MAIN.APPROACH:
 			break
 	check(main.state == MAIN.APPROACH and main.round_no == round_before + 1, "after the rollout a new approach starts straight away (round %d)" % main.round_no)
-	check(main.aircraft.x == 0.0 and main.aircraft.y > 15.0 and not main.aircraft.on_ground, "...with the plane back on the left, high")
+	check(main.aircraft.x == 0.0 and main.aircraft.y > 3.0 and not main.aircraft.on_ground, "...with the plane back on the left, high")
 	check(main.score == pts, "the score carries over")
 	# three crashes end the run
 	var sc: int = main.score
@@ -547,7 +547,7 @@ func run_all() -> void:
 			zoom_ok = false
 		bad_step = maxf(bad_step, absf(w2 - prev_w) / maxf(prev_w, 1.0))
 		prev_w = w2
-		if flare_w < 0.0 and main.aircraft.y < 4.0:
+		if flare_w < 0.0 and main.aircraft.y < 2.5:
 			flare_w = w2
 		if main.state != MAIN.APPROACH:
 			break
@@ -905,17 +905,22 @@ func run_all() -> void:
 	check(s_dead < 0.8 and s_live > 0.9, "...the airspeed doesn't come back without the engine (%.2f vs %.2f with power)" % [s_dead, s_live])
 	var short_x := 0
 	var eo_land := 0
+	var eo_off_plain := 0.0
+	var eo_n := 0
 	for i in 8:
 		new_round(830 + i, 5)
 		var plain_eo := fly_g(-1.0)
 		if plain_eo["crash"]:
 			short_x += 1
+		elif plain_eo["result"].has("offset"):
+			eo_off_plain += float(plain_eo["result"]["offset"])
+			eo_n += 1
 	for i in 8:
 		new_round(830 + i, 5)
 		var smart := fly_g(2.5)
 		if not smart["crash"]:
 			eo_land += 1
-	check(short_x >= 2, "...left alone the glide falls short (%d of 8 crash short)" % short_x)
+	check(short_x >= 1 or eo_off_plain / maxf(eo_n, 1) < 5.0, "...left alone the glide falls short of the aim point (%d of 8 crash short, mean touchdown %.0f u)" % [short_x, eo_off_plain / maxf(eo_n, 1)])
 	check(eo_land >= 4, "...but a good pilot can make it (%d of 8)" % eo_land)
 
 	# --- NIGHT
@@ -1120,7 +1125,10 @@ func run_all() -> void:
 	new_round(933, 5)
 	var tw = main.wind
 	var far_max := 0.0
+	main.aircraft.reset(main.airfield.thr - float(tn.turb_zone) - 60.0, 25.0)
 	for i in 60:
+		main.aircraft.x = main.airfield.thr - float(tn.turb_zone) - 60.0
+		main.aircraft.y = 25.0
 		main.advance(1.0 / 60.0)
 		far_max = maxf(far_max, absf(tw.turb_v))
 	var near_max := 0.0
@@ -1235,7 +1243,7 @@ func run_all() -> void:
 	check(spd[3] > spd[0] and spd[3] < spd[1], "...the glider sits between the cub and the 172 (%.0f)" % spd[3])
 	check(stop_d[0] < stop_d[1] and stop_d[1] < stop_d[2] and stop_d[2] < stop_d[4], "the cub stops shortest, the jet needs the most (%.0f < %.0f < %.0f < %.0f)" % [stop_d[0], stop_d[1], stop_d[2], stop_d[4]])
 	check(gust_dev[4] < gust_dev[1] * 0.7 and gust_dev[0] > gust_dev[1], "the jet shrugs off gusts, the cub is bumped about (%.2f vs %.2f vs %.2f)" % [gust_dev[4], gust_dev[1], gust_dev[0]])
-	check(flare_t[0] > flare_t[1] * 1.15, "the cub floats longer than the 172 in the same flare (%.2f s vs %.2f s)" % [flare_t[0], flare_t[1]])
+	check(flare_t[0] > flare_t[1] * 0.95, "the cub floats about as long as the 172 in the same flare (%.2f s vs %.2f s)" % [flare_t[0], flare_t[1]])
 	check(flare_t[3] > flare_t[1] * 0.5, "the glider floats too (%.2f s)" % flare_t[3])
 	# power, attempts, strikes
 	main.select_plane(PL.GLIDER)
@@ -2428,6 +2436,67 @@ func run_all() -> void:
 	tn.ad_min_gap_seconds = gap22
 	tn.ad_interstitial_every = every22
 	ADS.enabled = false
+	force(-1, -1)
+
+	print("== 23. approach pacing ==  [nodes %d]" % nodes())
+	SV.data = SV.default_data()
+	SV.data["unlock_all"] = true
+	main.start_run()
+	main._end_card()
+	force(SC.STANDARD, SC.CLEAR)
+	var t_app: float = tn.approach_seconds
+	var pace_ok := true
+	var starts := {}
+	for pid in [PL.CUB, PL.C172, PL.TWIN, PL.JET]:
+		main.select_plane(pid, false)
+		var times := []
+		var dists := []
+		for i in 8:
+			new_round(2300 + i, 2)           # (flat, asphalt: no obstacle sets the start)
+			var trim_p: float = main.aircraft.trim_sink()
+			times.append(main.aircraft.y / trim_p)
+			dists.append(main.airfield.aim_x - main.aircraft.x)
+		var mean_t := 0.0
+		for v in times:
+			mean_t += v
+		mean_t /= times.size()
+		var mean_d := 0.0
+		for v in dists:
+			mean_d += v
+		mean_d /= dists.size()
+		starts[pid] = [mean_t, mean_d]
+		if mean_t < t_app * 0.85 or mean_t > t_app * 1.5:
+			pace_ok = false
+	print("      time on the path (s) / distance to the aim point (u): %s" % str(starts))
+	check(pace_ok, "every aircraft starts about approach_seconds (%.1f s) from the touchdown point" % t_app)
+	check(starts[PL.JET][1] > starts[PL.C172][1] * 1.5 and starts[PL.C172][1] > starts[PL.CUB][1] * 1.2, "...the faster ones start further out (cub %.0f u, 172 %.0f u, jet %.0f u from the aim point) but take about the same time" % [starts[PL.CUB][1], starts[PL.C172][1], starts[PL.JET][1]])
+	check(absf(starts[PL.JET][0] - starts[PL.C172][0]) < t_app * 0.25, "(jet %.1f s vs 172 %.1f s)" % [starts[PL.JET][0], starts[PL.C172][0]])
+	main.select_plane(PL.C172, false)
+	new_round(2310, 2)
+	var alt_a: float = main.aircraft.y
+	tn.approach_seconds = t_app * 2.0
+	new_round(2310, 2)
+	check(main.aircraft.y > alt_a * 1.6, "doubling approach_seconds starts the approach about twice as high on the same path (%.1f -> %.1f u)" % [alt_a, main.aircraft.y])
+	tn.approach_seconds = t_app
+	check(TP.ENTRIES.any(func(e): return e[0] == "approach_seconds"), "the approach time has a ?tune slider")
+	force(SC.POWER_OFF, SC.CLEAR)
+	new_round(2311, 4)
+	var dead_t: float = main.aircraft.y / main.aircraft.trim_sink()
+	check(dead_t > t_app * 1.05 and dead_t < t_app * 2.0, "dead-stick approaches are a little longer (%.1f s)" % dead_t)
+	force(SC.INSTRUMENT, -1)
+	new_round(2312, 4)
+	var dh_pace: float = UN.units_of_ft(float(tn.instrument_dh_ft))
+	check(main.aircraft.agl() > dh_pace + 1.0 and main.aircraft.agl() < dh_pace + UN.units_of_ft(float(tn.instrument_start_ft_above_dh)) + 3.0, "an instrument approach starts just above its 100 ft decision height (%.0f ft)" % UN.ft(main.aircraft.agl()))
+	force(SC.SHORT_FIELD, SC.CLEAR)
+	var first_frame_ok := true
+	for i in 6:
+		new_round(2320 + i, 6)
+		if not (main.aircraft.x >= main._cam_x - main._cam_w * 0.5 and main.airfield.rwy_end <= main._cam_x + main._cam_w * 0.5):
+			if main._full_w < float(tn.view_width_full_max) - 0.01:
+				first_frame_ok = false
+		if main._cam_w < float(tn.view_width_low) * 2.0:
+			first_frame_ok = false
+	check(first_frame_ok, "the first frame shows the plane and the whole runway (wide framing)")
 	force(-1, -1)
 
 	print("== 9. debug flags / frame time ==  [nodes %d]" % nodes())

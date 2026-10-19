@@ -25,13 +25,12 @@ var sim_step := 0.008
 var camera_tilt_deg := 9.0
 ## Every approach starts framed to show the plane and the whole runway (the width needed, capped here) and
 ## zooms smoothly in as the plane gets closer, reaching view_width_low (the close flare framing) once the plane
-## is zoom_close_distance from the aim markers. A low altitude also forces the close framing
-## (fully close at zoom_low_altitude, none above zoom_high_altitude).
+## is zoom_close_distance from the aim markers. A low altitude also forces the close framing (none at the height the
+## approach started from, fully close at zoom_low_altitude).
 var view_width_low := 38.0
 var view_width_full_max := 1500.0
-var zoom_close_distance := 110.0
-var zoom_high_altitude := 22.0
-var zoom_low_altitude := 10.0
+var zoom_close_distance := 80.0
+var zoom_low_altitude := 3.0
 ## Where the plane sits across the screen in the close framing (0 = left edge, 1 = right edge).
 var plane_screen_x := 0.26
 ## Where the ground sits up from the bottom of the screen, close framing / wide framing.
@@ -62,8 +61,16 @@ var approach_speed := 22.0
 ## The standard glide path: the approach attitude descends at this angle (so the sink rate is speed x tan(angle)). The PAPI
 ## shows this path.
 var glide_angle_deg := 3.0
-## Seconds an approach lasts (sets how high and far back it starts).
-var approach_seconds := 24.0
+## Target time of the approach (seconds of descent on the glide path from the start to the touchdown point; the flare and float
+## add a little). It sets how high and how far back every approach starts, per aircraft, so faster aircraft start further out
+## but take about the same time.
+var approach_seconds := 7.5
+## Dead-stick approaches (engine out, power-off 180, the glider) get this many times longer.
+var dead_stick_time_mult := 1.3
+## An instrument approach starts this many feet above its decision height; no approach starts closer than this many units
+## (plus anything an obstacle or a mountain ramp needs) before the threshold.
+var instrument_start_ft_above_dh := 25.0
+var min_start_distance := 25.0
 ## Vref (approach speed) and stall speed in knots for each aircraft.
 var vref_cub := 45.0
 var stall_cub := 38.0
@@ -196,9 +203,9 @@ var ramp_rounds := 10
 ## How far (units) the plain approach path can miss the aim markers, early rounds scaled down.
 var path_error_max := 55.0
 ## Aim markers sit this fraction of the runway length past the threshold (clamped, units).
-var aim_fraction := 0.2
-var aim_min := 55.0
-var aim_max := 190.0
+var aim_fraction := 0.12
+var aim_min := 45.0
+var aim_max := 100.0
 ## Runway lengths in units (x 5 = feet): asphalt 2600-4500 ft, grass 1900-2800, dirt 1600-2400.
 var runway_length_asphalt_min := 520.0
 var runway_length_asphalt_max := 900.0
@@ -321,7 +328,7 @@ var rain_vis_end := 600.0
 var rain_wet_decel := 0.65
 ## Turbulence on final: vertical noise (units/s), building from nothing this far before the threshold to full strength at it.
 var turb_strength := 0.6
-var turb_zone := 250.0
+var turb_zone := 80.0
 ## Wind shear: the downdraft (units/s), the headwind it takes away, how long it lasts, and the warning (windsock snap)
 ## before it hits (seconds).
 var shear_sink := 1.7

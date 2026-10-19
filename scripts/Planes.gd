@@ -20,7 +20,7 @@ const NAMES: Array[String] = ["CUB", "172", "TWIN", "GLIDER", "JET"]
 ## tough = multiplier on the structural touchdown limit; scale = how big it is drawn; body / accent = the paint; kind = which model.
 const PROFILES: Array[Dictionary] = [
 	{"name": "CUB", "blurb": "Slow and floaty. Lands short, but gusts push it around.",
-		"sink": 1.0, "lift": 0.85, "response": 1.15, "bleed": 0.8, "recover": 1.0, "ge": 1.9,
+		"sink": 1.0, "lift": 0.85, "response": 1.15, "bleed": 0.8, "recover": 1.0, "ge": 1.25,
 		"decel": 1.4, "gust": 1.25, "power": 1.0, "attempts": 3, "min_len": 0.0, "scale": 0.85, "tough": 1.0,
 		"body": Color(1.0, 0.86, 0.25), "accent": Color(0.75, 0.2, 0.15), "kind": 0},
 	{"name": "172", "blurb": "The balanced all-rounder.",
@@ -32,7 +32,7 @@ const PROFILES: Array[Dictionary] = [
 		"decel": 0.85, "gust": 0.8, "power": 1.0, "attempts": 3, "min_len": 450.0, "scale": 1.15, "tough": 1.1,
 		"body": Color(0.92, 0.94, 0.97), "accent": Color(0.2, 0.35, 0.75), "kind": 2},
 	{"name": "GLIDER", "blurb": "No engine. A long, quiet float. One attempt only.",
-		"sink": 1.5, "lift": 1.0, "response": 1.2, "bleed": 0.7, "recover": 0.0, "ge": 2.4,
+		"sink": 1.5, "lift": 1.0, "response": 1.2, "bleed": 0.7, "recover": 0.0, "ge": 1.8,
 		"decel": 1.0, "gust": 1.1, "power": 0.0, "attempts": 1, "min_len": 0.0, "scale": 1.0, "tough": 0.9,
 		"body": Color(0.97, 0.97, 0.99), "accent": Color(1.0, 0.55, 0.12), "kind": 3},
 	{"name": "JET", "blurb": "Very fast and very stable. Long runways only.",
