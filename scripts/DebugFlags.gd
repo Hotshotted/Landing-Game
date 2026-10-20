@@ -14,7 +14,7 @@ extends RefCounted
 ##   ?weather=fog|rain|turbulence|shear|clear          force that weather every approach
 ##   ?plane=cub|172|twin|glider|jet                    start in that aircraft
 ##   ?noads                                            no ad stubs (interstitials)
-##   ?screen=certificate|slip|career|logbook|hangar     open that screen at start (to look at it)
+##   ?screen=certificate|slip|career|logbook|hangar|choice|pause     open that screen at start (to look at it)
 ## Combine with "&", e.g.  ?nofx=smoke&noprewarm&perf
 ## The active flags are printed under the build stamp.
 

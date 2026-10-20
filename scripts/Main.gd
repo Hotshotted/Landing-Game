@@ -4,7 +4,7 @@ extends Node3D
 ## weather on a new random runway). A crash (hard landing, off the runway, trees, overrun) is a strike; the third ends the run.
 ## Everything is built once in _ready (and pre-warmed behind a splash); restarts and new rounds reuse it.
 
-enum { MENU, APPROACH, ROLLOUT, CRASH, FADE, OVER, CARD, AD }
+enum { MENU, APPROACH, ROLLOUT, CRASH, FADE, OVER, CARD, AD, CHOICE, CASHOUT }
 enum { FREE, RIDE, DAILY, PRACTICE }      # what the current run is: endless free flight, a checkride, the daily approach, or one practice landing
 
 var rng := RandomNumberGenerator.new()
@@ -14,6 +14,7 @@ var airfield: Airfield
 var aircraft: Aircraft
 var fx: Fx
 var sfx: Sfx
+var music: Music
 var hud: Hud
 var wind := Wind.new()
 var tune_panel: TunePanel
@@ -58,6 +59,15 @@ var _min_agl := 9999.0          # lowest the plane has been above the ground thi
 var state := MENU
 var round_no := 0
 var strikes := 0
+var pot := 0                    # free flight: coins earned this run and not banked yet (lost with a crash)
+var banked := 0                 # coins this run banked by cashing out
+var pot_lost := 0               # the pot that went down with the aircraft
+var _next_pick := Vector2i(-1, -1)   # the next approach's scenario / weather, chosen when the choice screen shows its hint
+var _cash_t := 0.0
+var _next_round := -1           # the round number _next_pick is for
+var _cash_shown := 0
+var _paused_run := false        # the pause menu is up
+var _pause_confirm := ""        # "quit" while the quit confirmation is showing
 var score := 0
 var best := 0
 var landings := 0
@@ -104,6 +114,7 @@ func _ready() -> void:
 		Ads.enabled = false
 	Save.load_data()
 	best = Save.load_best()
+	_setup_audio()
 	sun = DirectionalLight3D.new()
 	add_child(sun)
 	sun.look_at_from_position(Vector3.ZERO, Vector3(0.35, -0.7, -0.62))
@@ -129,12 +140,17 @@ func _ready() -> void:
 	add_child(fx)
 	sfx = Sfx.new()
 	add_child(sfx)
+	music = Music.new()
+	add_child(music)
 	fog = FogOverlay.new()
 	add_child(fog)
 	hud = Hud.new()
 	add_child(hud)
 	hud.plane_step.connect(_on_plane_step)
 	hud.menu_action.connect(_on_menu_action)
+	hud.choice.connect(_on_choice)
+	hud.pause_action.connect(_on_pause_action)
+	hud.volume_changed.connect(_on_volume_changed)
 	hud.hangar_pick.connect(_on_hangar_pick)
 	if DebugFlags.tune_enabled():
 		tune_panel = TunePanel.new()
@@ -231,12 +247,17 @@ func _open_debug_screen() -> void:
 		"logbook":
 			hud.show_logbook(logbook_text(), Save.data["airports"], _slips_for_logbook())
 		"hangar":
-			hud.show_hangar(Save.data)
+			_show_hangar()
+		"choice":
+			hud.show_choice({"title": "LANDED!", "pot": 137, "next_mult": 1.4, "hint": "Next: Fog, Short Field\n(winds, gusts and runways get tougher)"})
+		"pause":
+			hud.show_pause()
 
 func _show_menu() -> void:
 	state = MENU
 	hud.hide_card()
 	mode = FREE
+	hud.set_pot(0, 1.0, false)
 	hud.hide_logbook()
 	hud.hide_hangar()
 	hud.set_ad_button("", false)
@@ -252,6 +273,10 @@ func start_run() -> void:
 	run_coins = 0
 	_coins_award = 0
 	_coins_doubled = false
+	pot = 0
+	banked = 0
+	pot_lost = 0
+	_next_pick = Vector2i(-1, -1)
 	Ads.reset()
 	hud.set_ad_button("", false)
 	if not available_planes().has(plane_id):
@@ -267,9 +292,11 @@ func start_run() -> void:
 	best_streak = 0
 	hud.set_streak(0)
 	hud.hide_overlay()
+	hud.hide_choice()
 	hud.clear_popup()
 	hud.set_score(0)
-	hud.set_strikes(0, strikes_max())
+	hud.set_strikes(0, 0)
+	hud.set_pot(0, pot_multiplier(), true)
 	hud.set_fade_now(0.0)
 	fx.clear()
 	get_tree().paused = false
@@ -278,6 +305,12 @@ func start_run() -> void:
 
 ## Choose the scenario and weather, lay out the next runway and put the plane on its approach. `card` shows the title card
 ## first (the plane waits); tests pass false.
+## The scenario and weather of free-flight approach `rn` (what the rank and the aircraft allow; harder as the run goes on).
+func _pick_free(rn: int) -> Vector2i:
+	var scn_ok := _intersect(Planes.scenarios(plane_id), Career.scenarios(Save.data["rank"], Save.data["unlock_all"]))
+	var wx_ok := _intersect(Planes.weather(plane_id), Career.weather(Save.data["rank"], Save.data["unlock_all"]))
+	return Scenarios.pick(rn, rng, _last_scenario, scn_ok, wx_ok)
+
 func _begin_round(card: bool = true) -> void:
 	var entry: Dictionary = {}
 	if mode == RIDE or mode == DAILY or mode == PRACTICE:
@@ -289,9 +322,8 @@ func _begin_round(card: bool = true) -> void:
 		weather = int(entry["wx"])
 	else:
 		round_no += 1
-		var scn_ok := _intersect(Planes.scenarios(plane_id), Career.scenarios(Save.data["rank"], Save.data["unlock_all"]))
-		var wx_ok := _intersect(Planes.weather(plane_id), Career.weather(Save.data["rank"], Save.data["unlock_all"]))
-		var pick := Scenarios.pick(round_no, rng, _last_scenario, scn_ok, wx_ok)
+		var pick := _next_pick if (_next_pick.x >= 0 and _next_round == round_no and Scenarios.forced_scenario < 0) else _pick_free(round_no)
+		_next_pick = Vector2i(-1, -1)
 		scenario = pick.x
 		weather = pick.y
 	_last_scenario = scenario
@@ -328,6 +360,7 @@ func _begin_round(card: bool = true) -> void:
 	_dist_key = -1
 	_graded = false
 	_awarded = 0
+	_coins_award = 0
 	_arrested = false
 	_shear_state = 0
 	_min_agl = 9999.0
@@ -346,6 +379,7 @@ func _begin_round(card: bool = true) -> void:
 		hud.set_round(round_no)
 	hud.set_runway("%s  %d FT  %s" % [Airfield.SURFACE_NAMES[airfield.surface].to_upper(), int(roundf(Units.ft(airfield.rwy_len) / 50.0)) * 50, _terrain_text()])
 	hud.set_scenario_text(_scenario_line())
+	hud.set_pot(pot, pot_multiplier(), mode == FREE)
 	hud.set_wind(wind.head())
 	hud.set_hint("Drag UP to raise the nose, DOWN to lower it.\nKeep the PAPI lights 2 white + 2 red.\nFlare just before touchdown." if round_no == 1 and landings == 0 else "")
 	hud.set_fade_now(hud.fade_alpha())
@@ -454,9 +488,7 @@ func streak_multiplier() -> int:
 
 ## Crashes allowed in a run: three, but only one for the glider.
 func strikes_max() -> int:
-	if mode == RIDE or mode == DAILY or mode == PRACTICE:
-		return 1                  # a checkride or the daily: one crash and it's over
-	return mini(Tuning.strikes_max, Planes.attempts(plane_id))
+	return 1                      # one crash ends any run: free flight loses the pot, a checkride is failed
 
 ## Switch aircraft (the menu / game-over selector). Takes effect on the next approach.
 func select_plane(id: int, remember: bool = true) -> void:
@@ -465,11 +497,20 @@ func select_plane(id: int, remember: bool = true) -> void:
 		Save.data["plane"] = plane_id
 	aircraft.apply_plane(plane_id)
 	hud.set_plane_choice(plane_id)
-	hud.set_strikes(strikes, strikes_max())
+	hud.set_strikes(0, 0) if mode == FREE else hud.set_strikes(strikes, strikes_max())
 
 ## The aircraft you may pick: the ones your rank has unlocked.
 func available_planes() -> Array[int]:
-	return Career.planes(int(Save.data["rank"]), bool(Save.data["unlock_all"]))
+	var out := Career.planes(int(Save.data["rank"]), bool(Save.data["unlock_all"]))
+	for p in Save.data["owned_planes"]:
+		if not out.has(int(p)):
+			out.append(int(p))
+	out.sort()
+	return out
+
+## The pot multiplier the NEXT landing pays: x1.0, then +pot_step for every landing survived in this run.
+func pot_multiplier() -> float:
+	return 1.0 + Tuning.pot_step * float(landings)
 
 func _intersect(a: Array[int], b: Array[int]) -> Array[int]:
 	var out: Array[int] = []
@@ -502,6 +543,7 @@ var _event_frame := -100
 func _notification(what: int) -> void:
 	match what:
 		NOTIFICATION_APPLICATION_FOCUS_OUT, NOTIFICATION_APPLICATION_PAUSED, NOTIFICATION_WM_WINDOW_FOCUS_OUT:
+			pause_game()          # losing focus pauses the run (you resume it yourself)
 			if not _suspended:
 				_suspended = true
 				_paused_since_ms = Time.get_ticks_msec()
@@ -562,6 +604,8 @@ func advance(dt: float) -> void:
 			CRASH:
 				if _timer >= Tuning.crash_pause:
 					_leave_crash()
+			CASHOUT:
+				_step_cashout(dt)
 			AD:
 				_ad_t -= dt
 				hud.set_ad_time(_ad_t)
@@ -827,13 +871,22 @@ func _crash(reason: String) -> void:
 	if _awarded > 0:
 		landings -= 1
 		hud.set_score(score)
-	if _coins_award > 0:
+	var lost_text := ""
+	if mode == FREE:
+		pot -= _coins_award               # (a landing that ends in a crash doesn't count)
+		_coins_award = 0
+		pot_lost = maxi(pot, 0)
+		pot = 0
+		hud.set_pot(0, 1.0, true)
+		if pot_lost > 0:
+			lost_text = "\nPot lost: %d coins" % pot_lost
+	elif _coins_award > 0:
 		Save.add("coins", -_coins_award)
 		run_coins -= _coins_award
 		_coins_award = 0
 	_awarded = 0
-	hud.set_strikes(strikes, strikes_max())
-	hud.popup("CRASH", reason, Color(1.0, 0.35, 0.3), Tuning.crash_pause)
+	hud.set_strikes(0, 0) if mode == FREE else hud.set_strikes(strikes, strikes_max())
+	hud.popup("CRASH", reason + lost_text, Color(1.0, 0.35, 0.3), Tuning.crash_pause)
 	hud.set_hint("")
 	fx.crash(Vector3(aircraft.x, maxf(aircraft.y, aircraft.gy) + 1.5, 0.5))
 	fx.smoke(Vector3(aircraft.x, aircraft.gy + 0.4, 1.0), 1.0, Color(0.25, 0.25, 0.25))
@@ -872,6 +925,9 @@ func _finish_round(over: bool) -> void:
 	Save.add("flight_seconds", _flight_acc)
 	_flight_acc = 0.0
 	Save.store()
+	if mode == FREE and not over:
+		_enter_choice()           # landed: cash out the pot or keep flying
+		return
 	_after_fade_over = over
 	state = FADE
 	_timer = 0.0
@@ -890,6 +946,8 @@ func _show_over() -> void:
 		_show_ride_result()
 		return
 	_over_kind = "run"
+	_hide_pause_ui()
+	hud.set_pot(0, 1.0, false)
 	var new_best := score > best
 	if new_best:
 		best = score
@@ -899,7 +957,7 @@ func _show_over() -> void:
 	_refresh_menu_buttons()
 	hud.fade_to(0.0)
 	hud.clear_popup()
-	hud.show_over(score, best, landings, new_best, best_streak)
+	hud.show_over(score, best, landings, new_best, best_streak, banked, pot_lost)
 	_refresh_ad_button()
 
 # ---------- camera / HUD ----------
@@ -975,6 +1033,7 @@ func _update_hud(dt: float) -> void:
 	elif _dist_key != -1:
 		_dist_key = -1
 		hud.set_distance("")
+	hud.set_pause_button(_can_pause() and not hud.overlay_visible and state != FADE)
 	hud.update(dt)
 
 ## Runway distance readout: metres to the threshold, then metres of runway left. Text rebuilt only when the number changes.
@@ -1142,7 +1201,7 @@ func _on_menu_action(id: String) -> void:
 			_paused_total_ms = 0
 			start_daily()
 		"hangar":
-			hud.show_hangar(Save.data)
+			_show_hangar()
 		"ad":
 			_start_rewarded()
 		"back":
@@ -1270,7 +1329,7 @@ func _show_ride_result() -> void:
 
 func _redraw_over() -> void:
 	if _over_kind == "run":
-		hud.show_over(score, best, landings, false, best_streak)
+		hud.show_over(score, best, landings, false, best_streak, banked, pot_lost)
 	elif not _notice.is_empty():
 		hud.show_notice(_notice["title"], _notice["body"], _notice["prompt"], _notice["color"])
 	_refresh_ad_button()
@@ -1294,7 +1353,12 @@ func _record_landing(grade: int) -> void:
 	if mode == FREE:
 		Ads.note_round()
 	_coins_award = 0
-	if mode != RIDE:
+	if mode == FREE:
+		# the pot: the grade's coins (times the Greaser streak) times the pot multiplier; not banked until you cash out
+		_coins_award = int(roundf(float(Cosmetics.coins_for(grade, streak_multiplier())) * pot_multiplier()))
+		pot += _coins_award
+		hud.set_pot(pot, 1.0 + Tuning.pot_step * float(landings + 1), true)
+	elif mode != RIDE:
 		_coins_award = Cosmetics.coins_for(grade, streak_multiplier())
 		Save.add("coins", _coins_award)
 		run_coins += _coins_award
@@ -1331,7 +1395,7 @@ func debug_endorse() -> void:
 func debug_coins() -> void:
 	Save.add("coins", 500)
 	if hud.hangar_visible():
-		hud.show_hangar(Save.data)
+		_show_hangar()
 
 func debug_cycle_plane() -> void:
 	var list := available_planes()
@@ -1485,8 +1549,20 @@ func _apply_cosmetics() -> void:
 		aircraft.clear_scheme()
 	aircraft.set_pilot_gear(clampi(int(Save.data["gear"]), 0, Cosmetics.GEAR.size() - 1))
 
+func _show_hangar() -> void:
+	hud.show_hangar(Save.data, available_planes(), plane_id)
+
 func _on_hangar_pick(kind: String, idx: int) -> void:
 	if state != MENU and state != OVER:
+		return
+	if kind == "plane":
+		if not available_planes().has(idx):
+			if not Cosmetics.buy_plane(Save.data, idx):
+				hud.flash_warning("Not enough coins", Color(1.0, 0.5, 0.4))
+				return
+		select_plane(idx)
+		Save.store()
+		_show_hangar()
 		return
 	if not Cosmetics.owned(Save.data, kind, idx):
 		if not Cosmetics.buy(Save.data, kind, idx):
@@ -1495,7 +1571,7 @@ func _on_hangar_pick(kind: String, idx: int) -> void:
 	Save.data[kind] = idx
 	Save.store()
 	_apply_cosmetics()
-	hud.show_hangar(Save.data)
+	_show_hangar()
 
 # ---------- ads (stubs) ----------
 
@@ -1516,7 +1592,7 @@ func _finish_ad() -> void:
 			Save.store()
 			state = OVER
 			_death_time = Time.get_ticks_msec() / 1000.0
-			hud.show_over(score, best, landings, false, best_streak)
+			hud.show_over(score, best, landings, false, best_streak, banked, pot_lost)
 			_refresh_ad_button()
 		"fee":
 			Save.data["fee_halved"] = true
@@ -1549,3 +1625,200 @@ func _start_rewarded() -> void:
 	elif _over_kind == "ride_fail" and not bool(Save.data["fee_halved"]):
 		_play_ad("fee")
 
+
+# ---------- free flight: the choice after a landing, cashing out ----------
+
+## What the hint on the choice screen says about the next approach: "Next: Fog, Short Field".
+func _next_hint() -> String:
+	var parts: Array[String] = []
+	if _next_pick.y != Scenarios.CLEAR:
+		parts.append(Scenarios.WX_NAMES[_next_pick.y].capitalize())
+	if _next_pick.x != Scenarios.STANDARD:
+		parts.append(Scenarios.NAMES[_next_pick.x].capitalize())
+	if parts.is_empty():
+		parts.append("a plain approach")
+	var harder := "winds, gusts and runways get tougher"
+	return "Next: %s\n(%s)" % [", ".join(parts), harder]
+
+func _enter_choice() -> void:
+	state = CHOICE
+	_timer = 0.0
+	_next_pick = _pick_free(round_no + 1)
+	_next_round = round_no + 1
+	hud.set_hint("")
+	hud.show_choice({"title": "LANDED!", "pot": pot, "next_mult": pot_multiplier(), "hint": _next_hint()})
+	sfx.play(Sfx.CHIME, 1.0, -6.0)
+
+func _on_choice(kind: String) -> void:
+	if state != CHOICE:
+		return
+	match kind:
+		"keep":
+			hud.hide_choice()
+			_after_fade_over = false
+			state = FADE
+			_timer = 0.0
+			hud.fade_to(1.0)
+		"cashout":
+			_start_cashout()
+
+func _start_cashout() -> void:
+	state = CASHOUT
+	_cash_t = 0.0
+	_cash_shown = 0
+	hud.show_cashout()
+
+## The count-up: the number eases up to the pot with a tick for every few coins, gold sparkles at the end, then the run is over.
+func _step_cashout(dt: float) -> void:
+	_cash_t += dt
+	var dur := maxf(Tuning.cashout_seconds, 0.1)
+	var p := clampf(_cash_t / dur, 0.0, 1.0)
+	var eased := 1.0 - pow(1.0 - p, 3.0)
+	var n := int(roundf(float(pot) * eased))
+	if n != _cash_shown:
+		if n / 5 != _cash_shown / 5 and p < 1.0:
+			sfx.play(Sfx.CHIME, 1.0 + 0.8 * p, -14.0)
+		_cash_shown = n
+		hud.set_cash_count(n, 1.0 - p)
+	if p >= 1.0 and not _cash_done:
+		_cash_done = true
+		hud.set_cash_count(pot, 1.0)
+		sfx.play(Sfx.CHIME, 1.5, -2.0)
+		fx.sparkle(Vector3(aircraft.x, 6.0, 1.0), 4)
+		fx.sparkle(Vector3(aircraft.x + 6.0, 9.0, 1.0), 3)
+	if p >= 1.0 and _cash_t >= dur + 0.7:
+		_finish_cashout()
+
+func _finish_cashout() -> void:
+	banked = pot
+	run_coins = banked
+	Save.add("coins", banked)
+	pot = 0
+	hud.set_pot(0, 1.0, true)
+	Save.store()
+	hud.hide_choice()
+	_cash_done = false
+	_after_fade_over = true
+	state = FADE
+	_timer = 0.0
+	hud.fade_to(1.0)
+
+var _cash_done := false
+
+# ---------- pause ----------
+
+func is_run_paused() -> bool:
+	return _paused_run
+
+## States in which the pause button works.
+func _can_pause() -> bool:
+	return state == CARD or state == APPROACH or state == ROLLOUT or state == CRASH or state == FADE or state == CHOICE or state == CASHOUT
+
+func pause_game() -> void:
+	if _paused_run or not _can_pause():
+		return
+	_paused_run = true
+	_pause_confirm = ""
+	get_tree().paused = true
+	aircraft.clear_input()
+	hud.show_pause()
+
+func resume_game() -> void:
+	if not _paused_run:
+		return
+	_paused_run = false
+	_pause_confirm = ""
+	hud.hide_pause()
+	get_tree().paused = false
+	aircraft.clear_input()
+	_skip_frames = Tuning.resume_skip_frames
+
+func _hide_pause_ui() -> void:
+	_paused_run = false
+	hud.hide_pause()
+
+func _on_pause_action(id: String) -> void:
+	match id:
+		"pause":
+			pause_game()
+		"resume":
+			resume_game()
+		"settings":
+			hud.show_pause_settings(float(Save.data["settings"]["sound"]), float(Save.data["settings"]["music"]))
+		"settings_back":
+			Save.store()
+			hud.show_pause_main()
+		"quit":
+			_pause_confirm = "quit"
+			hud.show_pause_confirm(_quit_text())
+		"quit_no":
+			_pause_confirm = ""
+			hud.show_pause_main()
+		"quit_yes":
+			_quit_run()
+
+## What quitting costs, as the confirmation says it.
+func _quit_text() -> String:
+	match mode:
+		FREE:
+			return "Quit and lose %d coins?" % pot if pot > 0 else "Quit this run?"
+		RIDE:
+			return "Quit the checkride? It counts as a fail: the fee is lost and you get a pink slip."
+		PRACTICE:
+			return "Quit this practice landing? It won't count."
+	return "Quit the daily approach? This attempt is over."
+
+func _quit_run() -> void:
+	_paused_run = false
+	_pause_confirm = ""
+	hud.hide_pause()
+	get_tree().paused = false
+	hud.hide_choice()
+	hud.clear_popup()
+	hud.set_hint("")
+	match mode:
+		FREE:
+			pot_lost = pot
+			pot = 0
+			streak = 0
+			hud.set_streak(0)
+			_after_fade_over = true
+		RIDE:
+			ride_fails.append("Quit the checkride")
+			ride_fail_type = scenario
+			_after_fade_over = true
+		PRACTICE:
+			last_verdict = {"pass": false, "fails": ["Quit"] as Array[String]}
+			_after_fade_over = true
+		DAILY:
+			_after_fade_over = true
+	Save.add("flight_seconds", _flight_acc)
+	_flight_acc = 0.0
+	Save.store()
+	state = FADE
+	_timer = 0.0
+	hud.fade_to(1.0)
+
+func _on_volume_changed(kind: String, value: float) -> void:
+	Save.data["settings"][kind] = clampf(value, 0.0, 1.0)
+	_apply_volumes()
+
+func _setup_audio() -> void:
+	for nm in ["Sfx", "Music"]:
+		if AudioServer.get_bus_index(nm) == -1:
+			AudioServer.add_bus()
+			var i := AudioServer.bus_count - 1
+			AudioServer.set_bus_name(i, nm)
+			AudioServer.set_bus_send(i, &"Master")
+	_apply_volumes()
+
+func _apply_volumes() -> void:
+	var st: Dictionary = Save.data["settings"]
+	var si := AudioServer.get_bus_index("Sfx")
+	var mi := AudioServer.get_bus_index("Music")
+	if si >= 0:
+		AudioServer.set_bus_volume_db(si, linear_to_db(maxf(float(st["sound"]), 0.0001)))
+		AudioServer.set_bus_mute(si, float(st["sound"]) <= 0.001)
+	if mi >= 0:
+		AudioServer.set_bus_volume_db(mi, linear_to_db(maxf(float(st["music"]), 0.0001)))
+		AudioServer.set_bus_mute(mi, float(st["music"]) <= 0.001)

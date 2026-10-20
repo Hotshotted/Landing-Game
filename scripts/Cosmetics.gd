@@ -31,6 +31,8 @@ static func paint_has_scheme(idx: int) -> bool:
 
 ## Try to buy item `idx` of `kind` ("paint" or "gear") from the save. Returns true if it is now owned.
 static func buy(data: Dictionary, kind: String, idx: int) -> bool:
+	if kind == "plane":
+		return buy_plane(data, idx)
 	var list: Array[Dictionary] = PAINTS if kind == "paint" else GEAR
 	if idx < 0 or idx >= list.size():
 		return false
@@ -42,6 +44,17 @@ static func buy(data: Dictionary, kind: String, idx: int) -> bool:
 		return false
 	data["coins"] = int(data["coins"]) - cost
 	own.append(idx)
+	return true
+
+## Buy an aircraft with coins (does nothing if it is free, already bought or can't be afforded).
+static func buy_plane(data: Dictionary, id: int) -> bool:
+	var own: Array = data["owned_planes"]
+	if own.has(id) or Planes.price(id) == 0:
+		return true
+	if int(data["coins"]) < Planes.price(id):
+		return false
+	data["coins"] = int(data["coins"]) - Planes.price(id)
+	own.append(id)
 	return true
 
 static func owned(data: Dictionary, kind: String, idx: int) -> bool:

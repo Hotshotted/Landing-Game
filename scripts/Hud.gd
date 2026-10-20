@@ -61,6 +61,29 @@ var _cert_date: Label
 var _cert_sign: Label
 var _cert_on := false
 signal hangar_pick(kind: String, idx: int)
+signal choice(kind: String)             # "cashout" or "keep" (the choice screen after a landing)
+signal pause_action(id: String)         # "pause", "resume", "settings", "settings_back", "quit", "quit_yes", "quit_no"
+signal volume_changed(kind: String, value: float)
+var _hangar_planes: Array[Button] = []
+var _pot: Label
+var _choice_root: Control
+var _ch_title: Label
+var _ch_pot: Label
+var _ch_next: Label
+var _ch_hint: Label
+var _ch_cash: Button
+var _ch_keep: Button
+var _ch_count: Label
+var _choice_on := false
+var _pause_btn: Button
+var _pause_root: Control
+var _pz_title: Label
+var _pz_main: Control
+var _pz_settings: Control
+var _pz_confirm: Control
+var _pz_confirm_text: Label
+var _pz_sliders := {}
+var _pause_on := false
 var _hangar_root: Control
 var _hangar_paint: Array[Button] = []
 var _hangar_gear: Array[Button] = []
@@ -124,6 +147,7 @@ var overlay_visible := false
 
 func _ready() -> void:
 	layer = 5
+	process_mode = Node.PROCESS_MODE_ALWAYS     # (the pause menu works while the game is paused)
 	_glow = ColorRect.new()
 	_glow.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_glow.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -149,6 +173,10 @@ func _ready() -> void:
 	_place(_runway, 0.5, 0, -270, 72, 540, 40)
 	_dist = _label(34, HORIZONTAL_ALIGNMENT_CENTER)
 	_place(_dist, 0.5, 0, -270, 110, 540, 42)
+	_pot = _label(40, HORIZONTAL_ALIGNMENT_LEFT)
+	_place(_pot, 0, 0, 24, 148, 520, 48)
+	_pot.modulate = Color(1.0, 0.85, 0.3)
+	_pot.visible = false
 	_streak_label = _label(46, HORIZONTAL_ALIGNMENT_LEFT)
 	_place(_streak_label, 0, 0, 24, 236, 520, 70)
 	_streak_label.visible = false
@@ -281,6 +309,8 @@ func _ready() -> void:
 	_build_menu_buttons()
 	_build_logbook()
 	_build_hangar()
+	_build_choice()
+	_build_pause()
 	_build_career()
 	_build_certificate()
 	_build_ad()
@@ -332,6 +362,9 @@ func _ready() -> void:
 	move_child(_log_root, _splash.get_index())
 	move_child(_hangar_root, _splash.get_index())
 	move_child(_career_root, _splash.get_index())
+	move_child(_choice_root, _splash.get_index())
+	move_child(_pause_btn, _splash.get_index())
+	move_child(_pause_root, _splash.get_index())
 	move_child(_cert_root, _splash.get_index())
 	move_child(_ad_root, _splash.get_index())
 	move_child(_stamp, get_child_count() - 1)
@@ -590,6 +623,238 @@ func hide_certificate() -> void:
 func certificate_visible() -> bool:
 	return _cert_on
 
+## The pot of the free-flight run (coins earned, not banked) and the multiplier the next landing pays.
+func set_pot(coins: int, mult: float, show: bool) -> void:
+	_pot.visible = show
+	_pot.text = "POT %d   x%.1f" % [coins, mult]
+
+## The choice after a landing: CASH OUT (bank the pot) or KEEP FLYING (a harder approach). Built once.
+func _build_choice() -> void:
+	_choice_root = Control.new()
+	_choice_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_choice_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_choice_root.visible = false
+	add_child(_choice_root)
+	var dim := ColorRect.new()
+	dim.color = Color(0.04, 0.06, 0.12, 0.72)
+	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_choice_root.add_child(dim)
+	_ch_title = _label(120, HORIZONTAL_ALIGNMENT_CENTER)
+	remove_child(_ch_title)
+	_choice_root.add_child(_ch_title)
+	_place(_ch_title, 0, 0, 0, 380, 1080, 150)
+	_ch_title.anchor_right = 1.0
+	_ch_title.offset_right = 0
+	_ch_title.add_theme_color_override("font_color", Color(0.6, 1.0, 0.7))
+	_ch_pot = _label(84, HORIZONTAL_ALIGNMENT_CENTER)
+	remove_child(_ch_pot)
+	_choice_root.add_child(_ch_pot)
+	_place(_ch_pot, 0, 0, 0, 580, 1080, 110)
+	_ch_pot.anchor_right = 1.0
+	_ch_pot.offset_right = 0
+	_ch_pot.add_theme_color_override("font_color", Color(1.0, 0.85, 0.3))
+	_ch_next = _label(46, HORIZONTAL_ALIGNMENT_CENTER)
+	remove_child(_ch_next)
+	_choice_root.add_child(_ch_next)
+	_place(_ch_next, 0, 0, 0, 710, 1080, 64)
+	_ch_next.anchor_right = 1.0
+	_ch_next.offset_right = 0
+	_ch_hint = _label(46, HORIZONTAL_ALIGNMENT_CENTER)
+	remove_child(_ch_hint)
+	_choice_root.add_child(_ch_hint)
+	_ch_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_place(_ch_hint, 0.5, 0, -480, 790, 960, 140)
+	_ch_hint.add_theme_color_override("font_color", Color(0.7, 0.88, 1.0))
+	_ch_cash = Button.new()
+	_ch_cash.text = "CASH OUT"
+	_ch_cash.add_theme_font_size_override("font_size", 64)
+	_ch_cash.pressed.connect(func(): choice.emit("cashout"))
+	_choice_root.add_child(_ch_cash)
+	_place(_ch_cash, 0, 0, 40, 1010, 480, 230)
+	_ch_keep = Button.new()
+	_ch_keep.text = "KEEP FLYING"
+	_ch_keep.add_theme_font_size_override("font_size", 64)
+	_ch_keep.pressed.connect(func(): choice.emit("keep"))
+	_choice_root.add_child(_ch_keep)
+	_place(_ch_keep, 0, 0, 560, 1010, 480, 230)
+	_ch_count = _label(180, HORIZONTAL_ALIGNMENT_CENTER)
+	remove_child(_ch_count)
+	_choice_root.add_child(_ch_count)
+	_place(_ch_count, 0, 0, 0, 1000, 1080, 240)
+	_ch_count.anchor_right = 1.0
+	_ch_count.offset_right = 0
+	_ch_count.add_theme_color_override("font_color", Color(1.0, 0.88, 0.3))
+	_ch_count.visible = false
+
+## `info`: {title, pot (int), next_mult (float), hint (String)}
+func show_choice(info: Dictionary) -> void:
+	_choice_on = true
+	_ch_title.text = str(info["title"])
+	_ch_pot.text = "POT  %d coins" % int(info["pot"])
+	_ch_next.text = "Next landing pays  x%.1f" % float(info["next_mult"])
+	_ch_hint.text = str(info["hint"])
+	_ch_cash.text = "CASH OUT\n+%d" % int(info["pot"])
+	_ch_cash.visible = true
+	_ch_keep.visible = true
+	_ch_count.visible = false
+	_ch_next.visible = true
+	_ch_hint.visible = true
+	_choice_root.visible = true
+
+## CASH OUT was chosen: the buttons go, a big number counts up.
+func show_cashout() -> void:
+	_ch_cash.visible = false
+	_ch_keep.visible = false
+	_ch_next.visible = false
+	_ch_hint.visible = false
+	_ch_title.text = "BANKED!"
+	_ch_count.visible = true
+	_ch_count.text = "+0"
+
+func set_cash_count(n: int, pop: float = 0.0) -> void:
+	_ch_count.text = "+%d" % n
+	_ch_count.scale = Vector2.ONE * (1.0 + 0.12 * pop)
+	_ch_count.pivot_offset = _ch_count.size * 0.5
+
+func hide_choice() -> void:
+	_choice_on = false
+	_choice_root.visible = false
+
+func choice_visible() -> bool:
+	return _choice_on
+
+## The pause button (top-right, clear of the approach view) and the pause menu: Resume / Settings (sound and music volume) / Quit
+## (with a confirmation). Built once.
+func _build_pause() -> void:
+	_pause_btn = Button.new()
+	_pause_btn.text = "II"
+	_pause_btn.add_theme_font_size_override("font_size", 40)
+	_pause_btn.focus_mode = Control.FOCUS_NONE
+	_pause_btn.pressed.connect(func(): pause_action.emit("pause"))
+	add_child(_pause_btn)
+	_place(_pause_btn, 1, 0, -106 - (190.0 if DebugFlags.tune_enabled() else 0.0), 14, 86, 86)
+	_pause_btn.visible = false
+	_pause_root = Control.new()
+	_pause_root.mouse_filter = Control.MOUSE_FILTER_STOP
+	_pause_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_pause_root.visible = false
+	add_child(_pause_root)
+	var dim := ColorRect.new()
+	dim.color = Color(0.03, 0.05, 0.1, 0.82)
+	dim.mouse_filter = Control.MOUSE_FILTER_STOP
+	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_pause_root.add_child(dim)
+	_pz_title = _label(120, HORIZONTAL_ALIGNMENT_CENTER)
+	remove_child(_pz_title)
+	_pause_root.add_child(_pz_title)
+	_place(_pz_title, 0, 0, 0, 380, 1080, 150)
+	_pz_title.anchor_right = 1.0
+	_pz_title.offset_right = 0
+	_pz_title.text = "PAUSED"
+	_pz_main = _pz_group()
+	for i in 3:
+		var ids := ["resume", "settings", "quit"]
+		var texts := ["RESUME", "SETTINGS", "QUIT"]
+		var b := Button.new()
+		b.text = texts[i]
+		b.add_theme_font_size_override("font_size", 56)
+		var id: String = ids[i]
+		b.pressed.connect(func(): pause_action.emit(id))
+		_pz_main.add_child(b)
+		_place(b, 0, 0, 190, 600 + i * 180, 700, 140)
+	_pz_settings = _pz_group()
+	var names := ["sound", "music"]
+	var caps := ["SOUND", "MUSIC"]
+	for i in 2:
+		var l := _label(48, HORIZONTAL_ALIGNMENT_LEFT)
+		remove_child(l)
+		_pz_settings.add_child(l)
+		l.text = caps[i]
+		_place(l, 0, 0, 120, 600 + i * 190, 600, 70)
+		var sl := HSlider.new()
+		sl.min_value = 0.0
+		sl.max_value = 1.0
+		sl.step = 0.05
+		sl.value = 1.0
+		var nm: String = names[i]
+		sl.value_changed.connect(func(v: float): volume_changed.emit(nm, v))
+		_pz_settings.add_child(sl)
+		_place(sl, 0, 0, 120, 680 + i * 190, 840, 70)
+		_pz_sliders[nm] = sl
+	var sb := Button.new()
+	sb.text = "BACK"
+	sb.add_theme_font_size_override("font_size", 56)
+	sb.pressed.connect(func(): pause_action.emit("settings_back"))
+	_pz_settings.add_child(sb)
+	_place(sb, 0, 0, 190, 1040, 700, 140)
+	_pz_confirm = _pz_group()
+	_pz_confirm_text = _label(56, HORIZONTAL_ALIGNMENT_CENTER)
+	remove_child(_pz_confirm_text)
+	_pz_confirm.add_child(_pz_confirm_text)
+	_pz_confirm_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_place(_pz_confirm_text, 0.5, 0, -440, 560, 880, 300)
+	var yes := Button.new()
+	yes.text = "YES, QUIT"
+	yes.add_theme_font_size_override("font_size", 52)
+	yes.pressed.connect(func(): pause_action.emit("quit_yes"))
+	_pz_confirm.add_child(yes)
+	_place(yes, 0, 0, 60, 960, 450, 150)
+	var no := Button.new()
+	no.text = "NO"
+	no.add_theme_font_size_override("font_size", 52)
+	no.pressed.connect(func(): pause_action.emit("quit_no"))
+	_pz_confirm.add_child(no)
+	_place(no, 0, 0, 570, 960, 450, 150)
+
+func _pz_group() -> Control:
+	var c := Control.new()
+	c.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	c.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	c.visible = false
+	_pause_root.add_child(c)
+	return c
+
+func set_pause_button(on: bool) -> void:
+	_pause_btn.visible = on and not _pause_on
+
+func pause_button_rect() -> Rect2:
+	return Rect2(_pause_btn.global_position, _pause_btn.size)
+
+func show_pause() -> void:
+	_pause_on = true
+	_pause_btn.visible = false
+	_pause_root.visible = true
+	show_pause_main()
+
+func show_pause_main() -> void:
+	_pz_title.text = "PAUSED"
+	_pz_main.visible = true
+	_pz_settings.visible = false
+	_pz_confirm.visible = false
+
+func show_pause_settings(sound: float, music: float) -> void:
+	_pz_title.text = "SETTINGS"
+	_pz_main.visible = false
+	_pz_settings.visible = true
+	_pz_confirm.visible = false
+	(_pz_sliders["sound"] as HSlider).set_value_no_signal(sound)
+	(_pz_sliders["music"] as HSlider).set_value_no_signal(music)
+
+func show_pause_confirm(text: String) -> void:
+	_pz_title.text = "QUIT?"
+	_pz_confirm_text.text = text
+	_pz_main.visible = false
+	_pz_settings.visible = false
+	_pz_confirm.visible = true
+
+func hide_pause() -> void:
+	_pause_on = false
+	_pause_root.visible = false
+
+func pause_visible() -> bool:
+	return _pause_on
+
 ## The hangar: paint schemes and pilot gear as buttons (buy / equip), built once.
 func _build_hangar() -> void:
 	_hangar_root = Control.new()
@@ -620,7 +885,16 @@ func _build_hangar() -> void:
 	back.add_theme_font_size_override("font_size", 48)
 	back.pressed.connect(func(): menu_action.emit("back"))
 	_hangar_root.add_child(back)
-	_place(back, 0.5, 0, -170, 1330, 340, 110)
+	_place(back, 0.5, 0, -170, 1730, 340, 110)
+	var h3 := _label(36, HORIZONTAL_ALIGNMENT_CENTER)
+	remove_child(h3)
+	_hangar_root.add_child(h3)
+	h3.text = "AIRCRAFT"
+	_place(h3, 0, 0, 0, 1310, 1080, 50)
+	h3.anchor_right = 1.0
+	h3.offset_right = 0
+	for i in Planes.COUNT:
+		_hangar_planes.append(_hangar_button("plane", i, 1370 + (i / 2) * 110))
 
 func _hangar_button(kind: String, idx: int, y: float) -> Button:
 	var b := Button.new()
@@ -631,7 +905,7 @@ func _hangar_button(kind: String, idx: int, y: float) -> Button:
 	return b
 
 ## Refresh the hangar's buttons from the save: "[NAME]" equipped, "NAME" owned, "NAME  150c" for sale.
-func show_hangar(data: Dictionary) -> void:
+func show_hangar(data: Dictionary, planes_avail: Array = [], plane_now: int = -1) -> void:
 	_hangar_on = true
 	_set_overlay(true)
 	_ov_title.text = "HANGAR"
@@ -646,6 +920,9 @@ func show_hangar(data: Dictionary) -> void:
 	for i in _hangar_gear.size():
 		var g: Dictionary = Cosmetics.GEAR[i]
 		_hangar_gear[i].text = _hangar_label(g["name"], g["cost"], (data["owned_gear"] as Array).has(i), int(data["gear"]) == i)
+	for i in _hangar_planes.size():
+		var pn: String = Planes.NAMES[i]
+		_hangar_planes[i].text = _hangar_label(pn, Planes.price(i), planes_avail.has(i), plane_now == i)
 	_hangar_root.visible = true
 	_menu_row.visible = false
 	_sel_row.visible = false
@@ -1072,14 +1349,23 @@ func hide_logbook() -> void:
 func logbook_visible() -> bool:
 	return _log_on
 
-func show_over(total: int, best: int, landings: int, new_best: bool, best_streak: int = 0) -> void:
+## The end of a free-flight run: cashed out (`banked` coins went into your account) or lost (`lost` = the pot that went down
+## with the aircraft).
+func show_over(total: int, best: int, landings: int, new_best: bool, best_streak: int = 0, banked: int = 0, lost: int = 0) -> void:
 	hide_career()
 	hide_certificate()
+	hide_choice()
 	_set_overlay(true)
-	_ov_title.text = "RUN OVER"
-	_ov_title.add_theme_font_size_override("font_size", 150)
-	_ov_title.add_theme_color_override("font_color", Color(1.0, 0.4, 0.35))
-	_ov_body.text = "Score  %d\nLandings  %d\nBest streak  x%d\n%s" % [total, landings, maxi(best_streak, 1) if best_streak > 0 else 0, "NEW BEST!" if new_best else "Best  %d" % best]
+	var cashed := banked > 0 and lost == 0
+	_ov_title.text = "CASHED OUT" if cashed else "RUN OVER"
+	_ov_title.add_theme_font_size_override("font_size", 120 if cashed else 150)
+	_ov_title.add_theme_color_override("font_color", Color(1.0, 0.85, 0.3) if cashed else Color(1.0, 0.4, 0.35))
+	var money := ""
+	if lost > 0:
+		money = "\nPot lost: %d coins" % lost
+	elif banked > 0:
+		money = "\nBanked  +%d coins" % banked
+	_ov_body.text = "Score  %d\nLandings  %d\nBest streak  x%d\n%s%s" % [total, landings, maxi(best_streak, 1) if best_streak > 0 else 0, "NEW BEST!" if new_best else "Best  %d" % best, money]
 	_ov_prompt.text = "TAP TO FLY AGAIN"
 	_menu_row.visible = true
 
@@ -1269,6 +1555,10 @@ func begin_prewarm() -> void:
 	_ad_root.visible = true
 	_career_root.visible = true
 	_cert_root.visible = true
+	_choice_root.visible = true
+	_pause_root.visible = true
+	_pz_main.visible = true
+	_pause_btn.visible = true
 	_menu_row.visible = true
 	_ov_title.text = "GREASER"
 	_ov_body.text = "0123456789 Greaser! Smooth Good Firm Hard CRASH Off the runway! Hit the trees!"
@@ -1297,6 +1587,9 @@ func end_prewarm() -> void:
 	hide_hangar()
 	hide_career()
 	hide_certificate()
+	hide_choice()
+	hide_pause()
+	_pause_btn.visible = false
 	hide_ad()
 	_set_overlay(false)
 	clear_popup()

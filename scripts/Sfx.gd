@@ -29,6 +29,7 @@ func _ready() -> void:
 		return n * 0.4 * sin(PI * t / 0.6)))
 	for i in POOL:
 		var p := AudioStreamPlayer.new()
+		p.bus = &"Sfx"
 		add_child(p)
 		_players.append(p)
 

@@ -181,6 +181,17 @@ var ride_landings := 3
 var exam_fee_base := 40.0
 var exam_fee_growth := 1.45
 
+# ---------- Pot, cash-out and aircraft prices ----------
+## Push-your-luck free flight: the pot (coins earned in the run, not banked yet) is multiplied by 1 + pot_step x (landings survived)
+## and is lost with a crash; CASH OUT banks it with a count-up of this many seconds.
+var pot_step := 0.2
+var cashout_seconds := 1.8
+## Aircraft bought with coins (a rank also unlocks them; the Cub is free).
+var price_172 := 200
+var price_glider := 450
+var price_twin := 600
+var price_jet := 1200
+
 # ---------- Rollout ----------
 ## Braking per surface (units/s^2): asphalt, grass, dirt.
 var decel_asphalt := 4.6
@@ -197,9 +208,12 @@ var nose_settle_rate := 30.0
 
 # ---------- Rounds ----------
 ## Three crashes end the run.
-var strikes_max := 3
-## Difficulty (wind, gusts, short fields, terrain) ramps up over this many rounds.
-var ramp_rounds := 10
+var strikes_max := 1       # one crash ends a run (and loses the pot)
+## Difficulty (wind, gusts, short fields, weather, terrain) grows by this much with every landing survived in a run
+## (0.1 = full difficulty on the 11th approach) ...
+var difficulty_step := 0.1
+## ... and keeps growing up to this (1 = the old "full" difficulty).
+var difficulty_max := 1.6
 ## How far (units) the plain approach path can miss the aim markers, early rounds scaled down.
 var path_error_max := 55.0
 ## Aim markers sit this fraction of the runway length past the threshold (clamped, units).
@@ -277,11 +291,11 @@ var go_around_climb := 10.0
 
 # ---------- Coins, daily approach, ad stubs ----------
 ## Coins per landing by grade (Greaser! .. Hard), times the streak multiplier. They only buy paint and pilot gear.
-var coins_greaser := 10
-var coins_smooth := 6
-var coins_good := 4
-var coins_firm := 2
-var coins_hard := 1
+var coins_greaser := 20
+var coins_smooth := 12
+var coins_good := 8
+var coins_firm := 4
+var coins_hard := 2
 ## The daily approach is always flown at this difficulty round.
 var daily_round := 8
 ## The fake "Ad playing" screen lasts this long (seconds). Real ad SDKs replace Ads.gd's stubs later.
@@ -342,6 +356,6 @@ var prewarm_stable_frames := 10
 var prewarm_stable_ms := 45.0
 var prewarm_max_seconds := 6.0
 
-## 0 in round 1 up to 1 from round ramp_rounds + 1 on.
+## 0 in round 1, difficulty_step more with every round, up to difficulty_max.
 func ramp(round_no: int) -> float:
-	return clampf(float(round_no - 1) / maxf(float(ramp_rounds), 1.0), 0.0, 1.0)
+	return clampf(float(round_no - 1) * difficulty_step, 0.0, difficulty_max)

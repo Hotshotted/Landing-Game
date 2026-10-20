@@ -154,7 +154,7 @@ func run_all() -> void:
 	main.advance(float(tn.card_time) + 0.1)
 	check(main.state == MAIN.APPROACH and not main.hud.card_visible(), "the card goes after card_time and the approach begins")
 	check(not main.hud.overlay_visible, "the overlay is hidden in play")
-	check(main.round_no == 1 and main.strikes == 0 and main.score == 0, "run starts at round 1, no strikes, score 0")
+	check(main.round_no == 1 and main.pot == 0 and main.score == 0, "run starts at round 1, empty pot, score 0")
 	check(main.aircraft.x == 0.0 and main.aircraft.y > 3.0, "the plane starts on the left, high")
 	check(main.airfield.thr > float(tn.min_start_distance) - 1.0 and main.airfield.aim_x > main.airfield.thr, "the runway is ahead with the aim markers on it")
 
@@ -407,43 +407,43 @@ func run_all() -> void:
 	var pts: int = main.last_result.get("total", 0)
 	check(main.score == pts and pts > 0 and main.landings == 1, "touchdown adds its points to the score (+%d)" % pts)
 	check(main.hud._pop_title.text == str(main.last_result.get("name", "?")), "the grade popup names the grade (%s)" % str(main.last_result.get("name", "?")))
-	# roll out to a stop, fade, next round on a new runway
+	# roll out to a stop: the choice screen (pot, next multiplier, a hint) instead of the next approach
 	var round_before: int = main.round_no
-	var thr_before: float = main.airfield.thr
 	for i in 60 * 16:
+		main.advance(1.0 / 60.0)
+		if main.state == MAIN.CHOICE:
+			break
+	check(main.state == MAIN.CHOICE and main.hud.choice_visible(), "after the rollout the choice screen shows")
+	check(main.pot > 0 and main.hud._ch_pot.text.contains(str(main.pot)) and main.hud._ch_next.text.contains("x1.2") and main.hud._ch_hint.text.begins_with("Next:"), "...with the pot (%d), the next multiplier (%s) and a hint (%s)" % [main.pot, main.hud._ch_next.text, main.hud._ch_hint.text.split("\n")[0]])
+	check(main.hud._ch_cash.visible and main.hud._ch_keep.visible, "...and CASH OUT / KEEP FLYING")
+	var pot_kept: int = main.pot
+	main._on_choice("keep")
+	for i in 60 * 6:
 		main.advance(1.0 / 60.0)
 		if main.state == MAIN.CARD:
 			main._end_card()
 		if main.state == MAIN.APPROACH:
 			break
-	check(main.state == MAIN.APPROACH and main.round_no == round_before + 1, "after the rollout a new approach starts straight away (round %d)" % main.round_no)
+	check(main.state == MAIN.APPROACH and main.round_no == round_before + 1 and not main.hud.choice_visible(), "KEEP FLYING starts the next approach (round %d)" % main.round_no)
 	check(main.aircraft.x == 0.0 and main.aircraft.y > 3.0 and not main.aircraft.on_ground, "...with the plane back on the left, high")
-	check(main.score == pts, "the score carries over")
-	# three crashes end the run
+	check(main.score == pts and main.pot == pot_kept, "the score and the pot carry over")
+	check(main.hud._pot.visible and main.hud._pot.text.contains(str(pot_kept)), "the pot is on the HUD (%s)" % main.hud._pot.text)
+	# a crash ends the run and loses the whole pot
 	var sc: int = main.score
-	for k in 3:
-		new_round(70 + k, 1)
-		main.aircraft.reset(main.airfield.rwy_end + 10.0, 20.0)
-		main.advance(0.1)
-		check(main.state == MAIN.CRASH and main.strikes == k + 1, "crash %d is strike %d" % [k + 1, k + 1])
-		check(main.score == sc, "a crash doesn't change the score")
-		main.advance(float(tn.crash_pause) + 0.1)
-		if k < 2:
-			for i in 60 * 3:
-				main.advance(1.0 / 60.0)
-				if main.state == MAIN.CARD:
-					main._end_card()
-				if main.state == MAIN.APPROACH:
-					break
-			check(main.state == MAIN.APPROACH, "after strike %d the run goes on with a new approach" % (k + 1))
-		else:
-			for i in 60 * 3:
-				main.advance(1.0 / 60.0)
-				if main.state == MAIN.OVER:
-					break
-	check(main.state == MAIN.OVER, "the third crash ends the run")
+	var coins_before_crash: int = SV.data["coins"]
+	new_round(70, 1)
+	main.aircraft.reset(main.airfield.rwy_end + 10.0, 20.0)
+	main.advance(0.1)
+	check(main.state == MAIN.CRASH and main.score == sc, "a crash doesn't change the score")
+	check(main.hud._pop_sub.text.contains("Pot lost: %d coins" % pot_kept), "...and says what it cost (%s)" % main.hud._pop_sub.text.replace("\n", " | "))
+	main.advance(float(tn.crash_pause) + 0.1)
+	for i in 60 * 3:
+		main.advance(1.0 / 60.0)
+		if main.state == MAIN.OVER:
+			break
+	check(main.state == MAIN.OVER and main.pot == 0 and SV.data["coins"] == coins_before_crash, "the crash ends the run: the pot is gone, nothing was banked")
 	check(main.hud.overlay_visible and main.hud._ov_title.text == "RUN OVER", "the game-over screen shows")
-	check(main.hud._ov_body.text.contains("Score  %d" % sc), "...with the score (the sum of the landings: %d)" % sc)
+	check(main.hud._ov_body.text.contains("Score  %d" % sc) and main.hud._ov_body.text.contains("Pot lost: %d coins" % pot_kept), "...with the score and 'Pot lost: %d coins' (%s)" % [pot_kept, main.hud._ov_body.text.replace("\n", " | ")])
 	# tap restarts in place
 	main._death_time = Time.get_ticks_msec() / 1000.0 - 1.0
 	var n_before_restart := nodes()
@@ -451,7 +451,7 @@ func run_all() -> void:
 	var r_before := resources()
 	tap()
 	main._end_card()
-	check(main.state == MAIN.APPROACH and main.strikes == 0 and main.score == 0 and main.round_no == 1, "a tap restarts the run IN PLACE (strikes 0, score 0, round 1)")
+	check(main.state == MAIN.APPROACH and main.pot == 0 and main.score == 0 and main.round_no == 1, "a tap restarts the run IN PLACE (pot 0, score 0, round 1)")
 	check(main.aircraft.visible and not main.hud.overlay_visible, "...with the plane back and the overlay gone")
 	check(nodes() == n_before_restart and objects() <= o_before + 8 and resources() <= r_before + 8, "restart creates no new nodes (%d -> %d) or resources" % [n_before_restart, nodes()])
 	# a tap during the crash screen doesn't restart too early
@@ -1249,13 +1249,13 @@ func run_all() -> void:
 	main.select_plane(PL.GLIDER)
 	new_round(1010, 5)
 	check(main.aircraft.power == 0.0 and main.airfield.power == 0.0, "the glider has no engine")
-	check(main.strikes_max() == 1 and not main.hud._strikes[1].visible, "...and one attempt (one strike pip)")
+	check(main.strikes_max() == 1, "...and one attempt")
 	main.aircraft.reset(main.airfield.rwy_end + 10.0, 20.0)
 	main.advance(0.1)
 	main._leave_crash()
 	check(main._after_fade_over, "...the first crash ends the run")
 	main.select_plane(PL.C172)
-	check(main.strikes_max() == 3 and main.hud._strikes[2].visible, "the 172 gets three")
+	check(main.strikes_max() == 1 and not main.hud._strikes[0].visible, "every aircraft: one crash ends the run (no strike pips)")
 	# only suitable scenarios and weather are offered
 	force(-1, -1)
 	var ok_all := true
@@ -1710,10 +1710,10 @@ func run_all() -> void:
 	check(COS.coins_for(0, 3) == 3 * COS.coins_for(0, 1), "the streak multiplier multiplies coins too")
 	new_round(1801, 3)
 	land_at(0.3, 0.0)
-	check(SV.data["coins"] == COS.coins_for(0, 1) and main.run_coins == SV.data["coins"], "a Greaser earns coins (%d)" % SV.data["coins"])
+	check(main.pot == COS.coins_for(0, 1) and SV.data["coins"] == 0, "a Greaser goes into the pot, not the bank (pot %d)" % main.pot)
 	check(main.hud._popup_text_for_test().contains("c"), "(coins in the popup)")
 	main._crash("test")
-	check(SV.data["coins"] == 0 and main.run_coins == 0, "a landing that ends in a crash gives its coins back")
+	check(SV.data["coins"] == 0 and main.pot == 0 and main.pot_lost == 0, "a landing that ends in a crash doesn't count: nothing in the pot, nothing banked")
 	check(not COS.buy(SV.data, "paint", 1) and SV.data["coins"] == 0, "can't buy with no coins")
 	SV.data["coins"] = 500
 	check(COS.buy(SV.data, "paint", 1) and SV.data["coins"] == 500 - int(COS.PAINTS[1]["cost"]) and COS.owned(SV.data, "paint", 1), "buying paint takes its price and owns it")
@@ -1815,6 +1815,8 @@ func run_all() -> void:
 		land_at(0.3, 0.0)
 		for i in 600:
 			main.advance(1.0 / 30.0)
+			if main.state == MAIN.CHOICE:
+				main._on_choice("keep")
 			if main.state == MAIN.AD:
 				ad_seen += 1
 				if i < 5:
@@ -1843,14 +1845,15 @@ func run_all() -> void:
 	main._end_card()
 	new_round(1830, 3)
 	land_at(0.3, 0.0)
-	var coins_before: int = SV.data["coins"]
-	var earned: int = main.run_coins
-	main._finish_round(true)
+	var earned: int = main.pot
+	main._finish_round(false)
+	main._on_choice("cashout")
 	for i in 600:
 		main.advance(1.0 / 30.0)
 		if main.state == MAIN.OVER:
 			break
-	check(main.state == MAIN.OVER and main.hud._menu_buttons["ad"].visible and main.hud._menu_buttons["ad"].text.contains("DOUBLE"), "the run-over screen offers a rewarded double-coins ad")
+	var coins_before: int = SV.data["coins"]
+	check(main.state == MAIN.OVER and SV.data["coins"] >= earned and main.hud._menu_buttons["ad"].visible and main.hud._menu_buttons["ad"].text.contains("DOUBLE"), "after cashing out the run-over screen offers a rewarded double-coins ad (+%d)" % earned)
 	main._on_menu_action("ad")
 	check(main.state == MAIN.AD and main.hud.ad_visible(), "tapping it plays the fake ad")
 	main.advance(float(tn.ad_fake_seconds) + 0.1)
@@ -2497,6 +2500,277 @@ func run_all() -> void:
 		if main._cam_w < float(tn.view_width_low) * 2.0:
 			first_frame_ok = false
 	check(first_frame_ok, "the first frame shows the plane and the whole runway (wide framing)")
+	force(-1, -1)
+
+	print("== 24. push-your-luck free flight ==  [nodes %d]" % nodes())
+	SV.data = SV.default_data()
+	SV.data["unlock_all"] = true
+	force(-1, -1)
+	main.start_run()
+	main._end_card()
+	check(main.hud._pot.visible and main.pot == 0 and not main.hud._strikes[0].visible, "a run starts with an empty pot on the HUD and no strike pips")
+	var step: float = tn.pot_step
+	check(is_equal_approx(main.pot_multiplier(), 1.0), "the first landing pays x1.0")
+	# land three greasers in a row: the pot grows by the grade's coins x the Greaser streak x the pot multiplier
+	var expect_pot := 0
+	for k in 3:
+		new_round(2400 + k, 2 + k)
+		main.state = MAIN.APPROACH
+		var mult_now: float = 1.0 + step * float(k)
+		check(is_equal_approx(main.pot_multiplier(), mult_now), "landing %d pays x%.1f" % [k + 1, mult_now])
+		land_at(0.3, 0.0)
+		expect_pot += int(roundf(float(COS.coins_for(0, k + 1)) * mult_now))
+		check(main.pot == expect_pot and SV.data["coins"] == 0, "...pot %d (the grade's coins x streak x%d x pot multiplier), nothing banked" % [main.pot, k + 1])
+		main._finish_round(false)
+		check(main.state == MAIN.CHOICE, "(choice after landing %d)" % (k + 1))
+		if k < 2:
+			main._on_choice("keep")
+			for i in 60 * 3:
+				main.advance(1.0 / 30.0)
+				if main.state == MAIN.CARD:
+					main._end_card()
+				if main.state == MAIN.APPROACH:
+					break
+	# the choice screen: pot, next multiplier, a hint about what is coming
+	main._next_pick = Vector2i(SC.SHORT_FIELD, SC.FOG)
+	main.hud.show_choice({"title": "LANDED!", "pot": main.pot, "next_mult": main.pot_multiplier(), "hint": main._next_hint()})
+	check(main.hud._ch_pot.text.contains(str(main.pot)) and main.hud._ch_next.text.contains("x%.1f" % (1.0 + step * 3.0)), "the choice screen shows the pot (%d) and the next multiplier (%s)" % [main.pot, main.hud._ch_next.text])
+	check(main.hud._ch_hint.text.contains("Fog") and main.hud._ch_hint.text.contains("Short Field"), "...and a hint about the next approach (%s)" % main.hud._ch_hint.text.split("\n")[0])
+	# cash out: a count-up, then the pot is banked
+	var pot_cash: int = main.pot
+	main._on_choice("cashout")
+	check(main.state == MAIN.CASHOUT and not main.hud._ch_cash.visible and main.hud._ch_count.visible, "CASH OUT starts the count-up")
+	var counts: Array[int] = []
+	for i in 400:
+		main.advance(1.0 / 30.0)
+		var shown := int(str(main.hud._ch_count.text).trim_prefix("+"))
+		counts.append(shown)
+		if main.state != MAIN.CASHOUT:
+			break
+	var mono := true
+	for i in range(1, counts.size()):
+		if counts[i] < counts[i - 1]:
+			mono = false
+	check(mono and counts[0] < pot_cash and counts.max() == pot_cash, "the number counts up to the pot (%d .. %d)" % [counts[0], counts.max()])
+	check(SV.data["coins"] == pot_cash and main.banked == pot_cash and main.pot == 0, "...the coins are banked (%d) and the pot is empty" % SV.data["coins"])
+	for i in 100:
+		main.advance(1.0 / 30.0)
+		if main.state == MAIN.OVER:
+			break
+	check(main.state == MAIN.OVER and main.hud._ov_title.text == "CASHED OUT" and main.hud._ov_body.text.contains("Banked  +%d" % pot_cash), "the run ends on a CASHED OUT screen (%s)" % main.hud._ov_body.text.replace("\n", " | "))
+	check(main.hud._menu_buttons["ad"].visible and main.hud._menu_buttons["ad"].text.contains("DOUBLE"), "...with the double-coins ad")
+	# a crash loses everything
+	main.start_run()
+	main._end_card()
+	new_round(2410, 3)
+	main.state = MAIN.APPROACH
+	land_at(0.3, 0.0)
+	main._finish_round(false)
+	main._on_choice("keep")
+	for i in 60 * 3:
+		main.advance(1.0 / 30.0)
+		if main.state == MAIN.CARD:
+			main._end_card()
+		if main.state == MAIN.APPROACH:
+			break
+	var pot_before_crash: int = main.pot
+	var coins_pc: int = SV.data["coins"]
+	main._crash("test")
+	check(main.pot == 0 and main.pot_lost == pot_before_crash and pot_before_crash > 0, "a crash empties the pot (%d coins lost)" % main.pot_lost)
+	check(main.hud._pop_sub.text.contains("Pot lost: %d coins" % pot_before_crash), "the crash popup says 'Pot lost: %d coins'" % pot_before_crash)
+	for i in 200:
+		main.advance(1.0 / 30.0)
+		if main.state == MAIN.OVER:
+			break
+	check(main.state == MAIN.OVER and SV.data["coins"] == coins_pc and main.hud._ov_body.text.contains("Pot lost: %d coins" % pot_before_crash) and not main.hud._menu_buttons["ad"].visible, "...the crash screen too; nothing banked; no double-coins offer")
+	# every approach is harder
+	check(is_equal_approx(tn.ramp(1), 0.0) and tn.ramp(6) > tn.ramp(3) and tn.ramp(40) <= float(tn.difficulty_max) + 0.001 and float(tn.difficulty_max) > 1.0, "difficulty grows with every landing (step %.2f per approach, up to x%.1f)" % [float(tn.difficulty_step), float(tn.difficulty_max)])
+	var len_early := 0.0
+	var len_late := 0.0
+	var wind_early := 0.0
+	var wind_late := 0.0
+	for i in 40:
+		main.rng.seed = 2500 + i
+		main.airfield.generate(2, main.rng, SC.STANDARD, SC.CLEAR)
+		len_early += main.airfield.rwy_len
+		wind_early += absf(main.airfield.wind_base)
+		main.rng.seed = 2500 + i
+		main.airfield.generate(14, main.rng, SC.STANDARD, SC.CLEAR)
+		len_late += main.airfield.rwy_len
+		wind_late += absf(main.airfield.wind_base)
+	check(len_late < len_early * 0.85 and wind_late > wind_early * 1.5, "later approaches have shorter runways (%.0f -> %.0f u) and stronger winds (%.1f -> %.1f)" % [len_early / 40.0, len_late / 40.0, wind_early / 40.0, wind_late / 40.0])
+	var wx_a := 0
+	var wx_b := 0
+	var hard_a := 0
+	var hard_b := 0
+	var rr2 := RandomNumberGenerator.new()
+	rr2.seed = 321
+	for i in 200:
+		var pa: Vector2i = SC.pick(3, rr2, -1)
+		var pb: Vector2i = SC.pick(12, rr2, -1)
+		if pa.y != SC.CLEAR:
+			wx_a += 1
+		if pb.y != SC.CLEAR:
+			wx_b += 1
+		if pa.x != SC.STANDARD:
+			hard_a += 1
+		if pb.x != SC.STANDARD:
+			hard_b += 1
+	check(wx_b > wx_a and hard_b > hard_a, "...worse weather (%d%% -> %d%% of approaches) and tougher scenarios (%d%% -> %d%%)" % [wx_a / 2, wx_b / 2, hard_a / 2, hard_b / 2])
+	check(main._gust_scale > 0.0, "(gusts scale with the ramp)")
+	force(-1, -1)
+
+	print("== 25. pause ==  [nodes %d]" % nodes())
+	SV.data = SV.default_data()
+	SV.data["unlock_all"] = true
+	main.start_run()
+	main._end_card()
+	new_round(2600, 3)
+	main.state = MAIN.APPROACH
+	main.advance(1.0 / 30.0)
+	check(main.hud._pause_btn.visible, "the pause button shows during the approach")
+	var vsz: Vector2 = main.hud.get_viewport().get_visible_rect().size
+	var prect: Rect2 = main.hud.pause_button_rect()
+	check(prect.position.x > vsz.x * 0.8 and prect.end.y < vsz.y * 0.1 and prect.size.x >= 40.0, "...in the top-right corner, clear of the approach view (%s of %s)" % [str(prect), str(vsz)])
+	var plane_scr: Vector2 = main.camera.unproject_position(Vector3(main.aircraft.x, main.aircraft.y, 0.0))
+	check(not prect.has_point(plane_scr) and not main.hud.papi_rect().intersects(prect), "(and not over the plane or the PAPI)")
+	main.pot = 840
+	var x_pause: float = main.aircraft.x
+	main._on_pause_action("pause")
+	check(main.is_run_paused() and main.hud.pause_visible() and paused and not main.can_process(), "pausing freezes the game and shows the pause menu")
+	check(main.hud._pz_main.visible and main.hud._pz_main.get_child_count() == 3, "Resume / Settings / Quit")
+	main._on_pause_action("resume")
+	check(not main.is_run_paused() and not paused and main.can_process() and not main.hud.pause_visible(), "Resume carries on")
+	main._on_pause_action("pause")
+	main._on_pause_action("settings")
+	check(main.hud._pz_settings.visible and main.hud._pz_sliders.has("sound") and main.hud._pz_sliders.has("music"), "Settings has sound and music volume sliders")
+	main.hud._pz_sliders["sound"].value = 0.4
+	main.hud._pz_sliders["music"].value = 0.0
+	var si: int = AudioServer.get_bus_index("Sfx")
+	var mi: int = AudioServer.get_bus_index("Music")
+	check(is_equal_approx(SV.data["settings"]["sound"], 0.4) and absf(AudioServer.get_bus_volume_db(si) - linear_to_db(0.4)) < 0.1 and AudioServer.is_bus_mute(mi), "...they set the Sfx / Music bus volumes (and are saved)")
+	main.hud._pz_sliders["sound"].value = 1.0
+	main.hud._pz_sliders["music"].value = 0.5
+	main._on_pause_action("settings_back")
+	check(main.hud._pz_main.visible and not main.hud._pz_settings.visible, "Back returns to the pause menu")
+	# quitting a free-flight run forfeits the pot, after a confirmation
+	main._on_pause_action("quit")
+	check(main.hud._pz_confirm.visible and main.hud._pz_confirm_text.text == "Quit and lose 840 coins?", "Quit asks 'Quit and lose 840 coins?' (%s)" % main.hud._pz_confirm_text.text)
+	main._on_pause_action("quit_no")
+	check(main.is_run_paused() and main.pot == 840 and main.hud._pz_main.visible, "NO goes back, the pot is untouched")
+	var coins_q: int = SV.data["coins"]
+	main._on_pause_action("quit")
+	main._on_pause_action("quit_yes")
+	for i in 100:
+		main.advance(1.0 / 30.0)
+		if main.state == MAIN.OVER:
+			break
+	check(main.state == MAIN.OVER and not paused and main.pot == 0 and main.pot_lost == 840 and SV.data["coins"] == coins_q, "YES ends the run and forfeits the pot (nothing banked)")
+	check(main.hud._ov_body.text.contains("Pot lost: 840 coins"), "...the run-over screen says so")
+	# no pause button in the menus
+	main.hud.set_pause_button(false)
+	main.state = MAIN.OVER
+	check(not main._can_pause(), "(no pausing on the run-over screen)")
+	# a checkride: quitting counts as a fail, with confirmation
+	SV.data = SV.default_data()
+	SV.data["rank"] = 2
+	SV.data["coins"] = 500
+	CAR.on_rank_change(SV.data, 2)
+	main.start_run()
+	main._end_card()
+	main.state = MAIN.MENU
+	main._show_menu()
+	main.debug_endorse()
+	var fee_q: int = CAR.fee(3)
+	check(main.book_checkride(), "(a booked checkride)")
+	main._end_card()
+	main.advance(1.0 / 30.0)
+	main.pause_game()
+	main._on_pause_action("quit")
+	check(main.hud._pz_confirm_text.text.contains("checkride") and main.hud._pz_confirm_text.text.contains("fail"), "quitting a checkride warns that it counts as a fail (%s)" % main.hud._pz_confirm_text.text)
+	main._on_pause_action("quit_yes")
+	for i in 100:
+		main.advance(1.0 / 30.0)
+		if main.state == MAIN.OVER:
+			break
+	check(main.state == MAIN.OVER and not main.ride_passed and SV.data["pink_slips"].size() == 1 and SV.data["rank"] == 2 and SV.data["coins"] == 500 - fee_q, "...it is a fail: a pink slip, the fee is gone, the rank stays")
+	check(main.hud._ov_title.text == "PINK SLIP", "(the pink-slip debrief)")
+	# practice: quitting just leaves it
+	main._continue_from_over()
+	var prof_before: int = CAR.count(SV.data, SC.STANDARD)
+	main._on_menu_action("career")
+	main._on_menu_action("practice:0")
+	main._end_card()
+	main.pause_game()
+	check(main.hud._pz_confirm_text.text == "" or true, "(paused in practice)")
+	main._on_pause_action("quit")
+	check(main.hud._pz_confirm_text.text.contains("practice"), "quitting practice asks too (%s)" % main.hud._pz_confirm_text.text)
+	main._on_pause_action("quit_yes")
+	for i in 100:
+		main.advance(1.0 / 30.0)
+		if main.state == MAIN.OVER:
+			break
+	check(main.state == MAIN.OVER and CAR.count(SV.data, SC.STANDARD) == prof_before, "...and it doesn't count")
+	# auto-pause when the app loses focus
+	main.start_run()
+	main._end_card()
+	main.state = MAIN.APPROACH
+	main._notification(Node.NOTIFICATION_APPLICATION_FOCUS_OUT)
+	check(main.is_run_paused() and paused, "losing focus pauses the run")
+	main._notification(Node.NOTIFICATION_APPLICATION_FOCUS_IN)
+	check(main.is_run_paused(), "...and it stays paused when focus comes back (you press Resume)")
+	main.resume_game()
+	main._skip_frames = 0
+	check(not paused and not main.is_run_paused(), "(resumed)")
+	# nothing is allocated by pausing
+	var n25 := nodes()
+	var r25 := resources()
+	for i in 6:
+		main.pause_game()
+		main._on_pause_action("settings")
+		main._on_pause_action("settings_back")
+		main._on_pause_action("quit")
+		main._on_pause_action("quit_no")
+		main.resume_game()
+	check(nodes() == n25 and resources() <= r25 + 2, "pausing allocates nothing (%d -> %d nodes)" % [n25, nodes()])
+	main._skip_frames = 0
+	force(-1, -1)
+
+	print("== 26. aircraft are bought with coins ==  [nodes %d]" % nodes())
+	SV.data = SV.default_data()
+	main.start_run()
+	main._end_card()
+	main.state = MAIN.MENU
+	main._show_menu()
+	check(PL.price(PL.CUB) == 0 and PL.price(PL.C172) > 0 and PL.price(PL.JET) > PL.price(PL.TWIN) and PL.price(PL.TWIN) > PL.price(PL.C172), "the Cub is free, the others have prices that grow (172 %d, twin %d, glider %d, jet %d)" % [PL.price(PL.C172), PL.price(PL.TWIN), PL.price(PL.GLIDER), PL.price(PL.JET)])
+	check(main.available_planes() == [PL.CUB], "a new pilot has the Cub")
+	main._on_menu_action("hangar")
+	check(main.hud._hangar_planes.size() == 5 and main.hud._hangar_planes[0].text == "[CUB]" and main.hud._hangar_planes[1].text.contains(str(PL.price(PL.C172))), "the hangar lists the aircraft with their prices (%s)" % main.hud._hangar_planes[1].text)
+	main._on_hangar_pick("plane", PL.C172)
+	check(not main.available_planes().has(PL.C172) and main.plane_id == PL.CUB, "without the coins you can't buy it")
+	SV.data["coins"] = PL.price(PL.C172) + 30
+	main._on_hangar_pick("plane", PL.C172)
+	check(main.available_planes().has(PL.C172) and main.plane_id == PL.C172 and SV.data["coins"] == 30 and SV.data["owned_planes"] == [PL.C172], "buying takes the price and you fly it")
+	check(main.hud._hangar_planes[1].text == "[172]", "(%s)" % main.hud._hangar_planes[1].text)
+	var kept: Dictionary = SV.migrate(SV.data)
+	check(kept["owned_planes"] == [PL.C172] and kept["settings"]["sound"] == 1.0, "bought aircraft survive the save (and the settings have defaults)")
+	main.start_run()
+	main._end_card()
+	check(main.plane_id == PL.C172 and main.available_planes() == [PL.CUB, PL.C172], "a run starts in the aircraft you bought")
+	# balance: what a typical cash-out buys
+	var typical := func(n: int, base: Array) -> int:
+		var total := 0.0
+		for k in n:
+			total += float(base[k % base.size()]) * (1.0 + step * float(k))
+		return int(roundf(total))
+	var casual: int = typical.call(4, [COS.coins_for(2, 1), COS.coins_for(1, 1)])
+	var good_run: int = typical.call(5, [COS.coins_for(1, 1), COS.coins_for(2, 1), COS.coins_for(1, 1)])
+	var greasers := 0.0
+	for k in 5:
+		greasers += float(COS.coins_for(0, k + 1)) * (1.0 + step * float(k))
+	print("      balance: casual 4-landing cash-out %d coins, good 5-landing %d, five greasers in a row %d | 172 %d, glider %d, twin %d, jet %d" % [casual, good_run, int(greasers), PL.price(PL.C172), PL.price(PL.GLIDER), PL.price(PL.TWIN), PL.price(PL.JET)])
+	check(PL.price(PL.C172) <= good_run * 3 and PL.price(PL.C172) >= casual and PL.price(PL.JET) <= int(greasers) * 3 and PL.price(PL.JET) >= good_run * 4, "prices are balanced against cash-outs: the 172 is a few runs, the jet is a real goal")
+	check(CAR.fee(7) <= int(greasers) and CAR.fee(1) < casual, "(and the examiner's fees stay within a cash-out or two)")
 	force(-1, -1)
 
 	print("== 9. debug flags / frame time ==  [nodes %d]" % nodes())

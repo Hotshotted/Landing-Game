@@ -39,6 +39,8 @@ static func default_data() -> Dictionary:
 		"gear": 0,               # equipped pilot gear (index into Cosmetics.GEAR)
 		"owned_paint": [0],
 		"owned_gear": [0],
+		"owned_planes": [],      # aircraft bought with coins (ranks unlock the others)
+		"settings": {"sound": 1.0, "music": 0.5},
 		"daily": {"day": -1, "best": 0, "tries": 0},   # the daily approach: which day, best score, attempts that day
 	}
 
@@ -124,6 +126,19 @@ static func migrate(d: Dictionary) -> Dictionary:
 			if it is Dictionary:
 				slips.append({"day": int(it.get("day", 0)), "rank": int(it.get("rank", 1)), "type": int(it.get("type", 0))})
 	out["pink_slips"] = slips
+	var op: Array = []
+	var opin = d.get("owned_planes", [])
+	if opin is Array:
+		for item in opin:
+			if int(item) >= 0 and int(item) <= 4 and not op.has(int(item)):
+				op.append(int(item))
+	out["owned_planes"] = op
+	var st: Dictionary = {"sound": 1.0, "music": 0.5}
+	var stin = d.get("settings", {})
+	if stin is Dictionary:
+		for k in st:
+			st[k] = clampf(float((stin as Dictionary).get(k, st[k])), 0.0, 1.0)
+	out["settings"] = st
 	for k in ["owned_paint", "owned_gear"]:
 		var own: Array = [0]
 		var oin = d.get(k, own)

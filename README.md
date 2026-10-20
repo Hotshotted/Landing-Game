@@ -132,3 +132,17 @@ the start altitude is that time x the aircraft's sink rate, so a faster aircraft
 an instrument approach starts 25 ft above its 100 ft decision height (so it is the longest: ~23 s in the 172, ~12 s in the jet - the
 decision height alone is 17 s of path at 65 kt); obstacles and a mountain ramp set how close a start can be. The opening frame is the
 wide framing showing the plane and the whole runway; the zoom tightens from there.
+
+## Push-your-luck free flight, pause, buying aircraft
+
+- **The pot**: a free-flight run has no strikes any more. Coins earned in the run go into an unbanked **pot** on the HUD, multiplied by
+  1 + `pot_step` (0.2) for every landing survived (x1.0, x1.2, x1.4 ...), with the Greaser streak bonus on top. After every landing
+  a choice screen shows the pot, the next multiplier and a hint about the next approach ("Next: Fog, Short Field"): **CASH OUT**
+  banks the pot with a count-up and ends the run, **KEEP FLYING** starts the next approach. A crash ends the run and loses the whole
+  pot ("Pot lost: 840 coins"). Each approach is harder (`difficulty_step` 0.1 per landing up to `difficulty_max` 1.6: tougher
+  scenarios, worse and more frequent weather, shorter runways, stronger winds and gusts).
+- **Aircraft are bought with coins** in the hangar (or unlocked by rank): 172 200, glider 450, twin 600, jet 1200 (Tuning `price_*`).
+  Typical cash-outs: ~50 coins (casual, 4 landings), ~70-250 (good), ~460 (five greasers in a row); examiner fees 40-372.
+- **Pause**: a button in the top-right corner. Resume / Settings (sound and music volume, saved) / Quit. Quitting a free-flight run
+  forfeits the pot (confirmation: "Quit and lose 840 coins?"); quitting a checkride counts as a fail (confirmation first). The game
+  also pauses itself when the app loses focus. `?screen=choice|pause` shows those screens.
