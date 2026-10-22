@@ -13,6 +13,8 @@ extends RefCounted
 ##   ?scenario=short|engineout|night|mountain|carrier|water|truck|standard   force that scenario every approach
 ##   ?weather=fog|rain|turbulence|shear|clear          force that weather every approach
 ##   ?plane=cub|172|twin|glider|jet                    start in that aircraft
+##   ?debug                                            show the build stamp (also shown with ?tune and ?perf)
+##   ?nologo                                           skip the studio logo intro
 ##   ?noads                                            no ad stubs (interstitials)
 ##   ?screen=certificate|slip|career|logbook|hangar|choice|pause     open that screen at start (to look at it)
 ## Combine with "&", e.g.  ?nofx=smoke&noprewarm&perf
@@ -33,6 +35,8 @@ static var scenario_value := -1
 static var weather_value := -1
 static var plane_value := -1
 static var noads := false
+static var nologo := false
+static var debug := false
 static var screen_value := ""
 
 ## True if the named effect has been switched off.
@@ -47,6 +51,11 @@ static func prewarm_enabled() -> bool:
 static func perf_enabled() -> bool:
 	_load()
 	return perf
+
+## The build stamp (commit, time, active flags) shows only for ?debug, ?tune or ?perf.
+static func stamp_enabled() -> bool:
+	_load()
+	return debug or tune or perf
 
 static func tune_enabled() -> bool:
 	_load()
@@ -148,6 +157,8 @@ static func parse(args: Array[String]) -> void:
 	weather_value = -1
 	plane_value = -1
 	noads = false
+	nologo = false
+	debug = false
 	screen_value = ""
 	for a in args:
 		var kv := a.split("=", true, 1)
@@ -167,6 +178,10 @@ static func parse(args: Array[String]) -> void:
 				noprewarm = true
 			"noads":
 				noads = true
+			"nologo":
+				nologo = true
+			"debug":
+				debug = true
 			"screen":
 				screen_value = val
 			"perf":

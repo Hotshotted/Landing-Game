@@ -3,7 +3,7 @@ extends Node
 ## Tiny synthesised sound effects (no audio files): tyre squeak, thud, crash, chime, gust whoosh.
 ## All streams are generated once at start-up; a small pool of players plays them.
 
-enum { SQUEAK, THUD, CRASH, CHIME, WHOOSH }
+enum { SQUEAK, THUD, CRASH, CHIME, WHOOSH, TAP }
 const RATE := 22050
 const POOL := 4
 
@@ -27,6 +27,8 @@ func _ready() -> void:
 		return (a + b) * e))
 	_streams.append(_make(0.6, func(t: float, n: float) -> float:
 		return n * 0.4 * sin(PI * t / 0.6)))
+	_streams.append(_make(0.08, func(t: float, _n: float) -> float:
+		return sin(TAU * (520.0 - 1800.0 * t) * t) * exp(-t * 38.0) * 0.8))
 	for i in POOL:
 		var p := AudioStreamPlayer.new()
 		p.bus = &"Sfx"

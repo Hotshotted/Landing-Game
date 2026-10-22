@@ -1,7 +1,9 @@
 # Greaser
 
 A one-thumb landing skill game for the phone (portrait, Godot 4.5, Compatibility renderer, exported to the web).
-Side view, low-poly primitives with black outlines.
+Side view, low-poly primitives with black outlines. By **Clear Prop Games**.
+
+The look is one shared style system (palette, fonts, icons, buttons, motion), written down in `docs/style.md`. The web build has its own loading page (`web/shell.html`). The build stamp is hidden unless you add `?debug` (or `?tune` / `?perf`) to the URL.
 
 **Play:** https://hotshotted.github.io/Landing-Game/
 

@@ -31,11 +31,11 @@ var _glow_level := 0.0
 signal plane_step(dir: int)
 signal menu_action(id: String)          # "fly", "ride", "logbook", "back" (more are added by the later phases)
 var _menu_row: Control
-var _menu_buttons := {}                 # id -> Button
+var _menu_buttons := {}                 # id -> UiButton
 var _log_root: Control
 var _log_stamps: Array[Panel] = []
 var _log_stamp_names: Array[Label] = []
-var _log_back: Button
+var _log_back: UiButton
 var _log_slips: Array[Panel] = []
 var _log_slip_labels: Array[Label] = []
 var _log_more: Label
@@ -45,11 +45,11 @@ const STAMP_COLS := 3
 const MAX_TYPE_ROWS := 10
 const MAX_PIPS := 5
 var _career_root: Control
-var _cr_rows: Array[Dictionary] = []     # {name: Label, pips: Array[ColorRect], btn: Button}
+var _cr_rows: Array[Dictionary] = []     # {name: Label, pips: Array[ColorRect], btn: UiButton}
 var _cr_speech: Label
 var _cr_speech_panel: Panel
 var _cr_status: Label
-var _cr_book: Button
+var _cr_book: UiButton
 var _cr_stamp: Label                     # the endorsement stamp on the speech panel
 var _cr_on := false
 var _instr_nodes: Array[Control] = []    # the instructor portrait (on the career screen)
@@ -64,18 +64,18 @@ signal hangar_pick(kind: String, idx: int)
 signal choice(kind: String)             # "cashout" or "keep" (the choice screen after a landing)
 signal pause_action(id: String)         # "pause", "resume", "settings", "settings_back", "quit", "quit_yes", "quit_no"
 signal volume_changed(kind: String, value: float)
-var _hangar_planes: Array[Button] = []
+var _hangar_planes: Array[UiButton] = []
 var _pot: Label
 var _choice_root: Control
 var _ch_title: Label
 var _ch_pot: Label
 var _ch_next: Label
 var _ch_hint: Label
-var _ch_cash: Button
-var _ch_keep: Button
+var _ch_cash: UiButton
+var _ch_keep: UiButton
 var _ch_count: Label
 var _choice_on := false
-var _pause_btn: Button
+var _pause_btn: UiButton
 var _pause_root: Control
 var _pz_title: Label
 var _pz_main: Control
@@ -85,8 +85,8 @@ var _pz_confirm_text: Label
 var _pz_sliders := {}
 var _pause_on := false
 var _hangar_root: Control
-var _hangar_paint: Array[Button] = []
-var _hangar_gear: Array[Button] = []
+var _hangar_paint: Array[UiButton] = []
+var _hangar_gear: Array[UiButton] = []
 var _hangar_on := false
 var _ad_root: ColorRect
 var _ad_title: Label
@@ -96,8 +96,9 @@ var _ad_on := false
 var _sel_row: Control
 var _sel_name: Label
 var _sel_info: Label
-var _sel_prev: Button
-var _sel_next: Button
+var _sel_icon: UiIcon
+var _sel_prev: UiButton
+var _sel_next: UiButton
 var stall_marker := 0.72
 var _scn_label: Label
 var _card_root: Control
@@ -134,6 +135,10 @@ var _ov_prompt: Label
 var _fade: ColorRect
 var _fade_target := 0.0
 var _splash: ColorRect
+var _logo_root: ColorRect
+var _logo_t := -1.0
+const LOGO_SECONDS := 1.8
+signal logo_finished
 var _stamp: Label
 var _perf: Label
 var _perf_worst := 0.0
@@ -293,19 +298,28 @@ func _ready() -> void:
 	_sel_row.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_sel_row.visible = false
 	add_child(_sel_row)
+	var sel_card := Panel.new()
+	sel_card.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	sel_card.add_theme_stylebox_override("panel", Style.box(Color(Style.SURFACE_DARK, 0.88), Style.LINE, Style.R_L, 3))
+	_sel_row.add_child(sel_card)
+	_place(sel_card, 0, 0.52, 16, -10, 1048, 290)
+	_sel_icon = UiIcon.new()
+	_sel_icon.glyph = "cub"
+	_sel_row.add_child(_sel_icon)
+	_place(_sel_icon, 0.5, 0.52, -50, -66, 100, 100)
 	_sel_name = _label(78, HORIZONTAL_ALIGNMENT_CENTER)
 	remove_child(_sel_name)
 	_sel_row.add_child(_sel_name)
-	_place(_sel_name, 0, 0.52, 160, 0, 760, 100)
+	_place(_sel_name, 0, 0.52, 160, 34, 760, 100)
 	_sel_info = _label(32, HORIZONTAL_ALIGNMENT_CENTER)
 	remove_child(_sel_info)
 	_sel_row.add_child(_sel_info)
 	_sel_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_place(_sel_info, 0, 0.52, 120, 110, 840, 150)
+	_place(_sel_info, 0, 0.52, 120, 134, 840, 140)
 	_sel_prev = _sel_button("<", -1)
-	_place(_sel_prev, 0, 0.52, 24, 0, 120, 100)
+	_place(_sel_prev, 0, 0.52, 24, 34, 120, 100)
 	_sel_next = _sel_button(">", 1)
-	_place(_sel_next, 0, 0.52, 936, 0, 120, 100)
+	_place(_sel_next, 0, 0.52, 936, 34, 120, 100)
 	_build_menu_buttons()
 	_build_logbook()
 	_build_hangar()
@@ -316,7 +330,7 @@ func _ready() -> void:
 	_build_ad()
 	# menu / game-over overlay
 	_overlay = ColorRect.new()
-	_overlay.color = Color(0.05, 0.08, 0.14, 0.62)
+	_overlay.color = Color(Style.SCRIM, 0.66)
 	_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	add_child(_overlay)
@@ -341,18 +355,19 @@ func _ready() -> void:
 	_fade.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	add_child(_fade)
 	# build stamp + active debug flags, bottom-left
-	_stamp = _label(24, HORIZONTAL_ALIGNMENT_LEFT)
+	_stamp = _label(18, HORIZONTAL_ALIGNMENT_LEFT)
 	var flags := DebugFlags.summary()
 	_stamp.text = "%s  %s" % [BuildInfo.COMMIT, BuildInfo.TIME] + (("\n" + flags) if flags != "" else "")
-	_place(_stamp, 0, 1, 14, -84 if flags != "" else -48, 700, 70)
-	_stamp.modulate = Color(1, 1, 1, 0.55)
+	_place(_stamp, 0, 1, 10, -64 if flags != "" else -34, 700, 56)
+	_stamp.modulate = Color(1, 1, 1, 0.4)
+	_stamp.visible = DebugFlags.stamp_enabled()      # (players never see it: only ?debug, ?tune or ?perf)
 	if DebugFlags.perf_enabled():
 		_perf = _label(26, HORIZONTAL_ALIGNMENT_LEFT)
 		_place(_perf, 0, 0, 14, 210, 700, 300)
 		_perf.modulate = Color(0.6, 1, 0.6, 0.9)
 	# start-up splash (above everything but the stamp)
 	_splash = ColorRect.new()
-	_splash.color = Color(0.08, 0.14, 0.24, 0.97)
+	_splash.color = Style.SURFACE_DARK
 	_splash.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_splash.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_splash.visible = false
@@ -368,6 +383,8 @@ func _ready() -> void:
 	move_child(_cert_root, _splash.get_index())
 	move_child(_ad_root, _splash.get_index())
 	move_child(_stamp, get_child_count() - 1)
+	_build_logo()
+	set_process(false)
 
 ## The buttons under the aircraft selector (menu and run-over screens). Built once; only shown / hidden / re-texted.
 func _build_menu_buttons() -> void:
@@ -378,10 +395,13 @@ func _build_menu_buttons() -> void:
 	add_child(_menu_row)
 	var ids := ["fly", "career", "logbook"]
 	var texts := ["FLY", "CAREER", "LOGBOOK"]
+	var icons := ["play", "career", "book"]
 	for i in ids.size():
-		var b := Button.new()
+		var b := UiButton.new()
 		b.text = texts[i]
-		b.add_theme_font_size_override("font_size", 44)
+		b.font_px = 40
+		b.icon = icons[i]
+		b.kind = "primary" if i == 0 else "secondary"
 		var id: String = ids[i]
 		b.pressed.connect(func(): menu_action.emit(id))
 		_menu_row.add_child(b)
@@ -389,19 +409,23 @@ func _build_menu_buttons() -> void:
 		_menu_buttons[id] = b
 	var ids2 := ["daily", "hangar"]
 	var texts2 := ["DAILY", "HANGAR"]
+	var icons2 := ["daily", "hangar"]
 	for i in ids2.size():
-		var b2 := Button.new()
+		var b2 := UiButton.new()
 		b2.text = texts2[i]
-		b2.add_theme_font_size_override("font_size", 44)
+		b2.font_px = 40
+		b2.icon = icons2[i]
 		var id2: String = ids2[i]
 		b2.pressed.connect(func(): menu_action.emit(id2))
 		_menu_row.add_child(b2)
 		_place(b2, 0, 0.78, 30 + i * 342, 140, 330, 120)
 		_menu_buttons[id2] = b2
 	# the rewarded-ad button (a stub; shown only where an ad can be offered)
-	var ad := Button.new()
+	var ad := UiButton.new()
 	ad.text = "WATCH AD"
-	ad.add_theme_font_size_override("font_size", 40)
+	ad.font_px = 36
+	ad.icon = "ad"
+	ad.kind = "gold"
 	ad.pressed.connect(func(): menu_action.emit("ad"))
 	_menu_row.add_child(ad)
 	_place(ad, 0, 0.78, 372, 140, 678, 120)
@@ -409,7 +433,7 @@ func _build_menu_buttons() -> void:
 	_menu_buttons["ad"] = ad
 
 func set_ad_button(text: String, shown: bool) -> void:
-	var b: Button = _menu_buttons["ad"]
+	var b: UiButton = _menu_buttons["ad"]
 	b.text = text
 	b.visible = shown
 
@@ -495,23 +519,28 @@ func _build_career() -> void:
 			_place(pip, 0, 0, 515.0 + float(k) * 46.0, y + 15.0, 36, 40)
 			pips.append(pip)
 		row["pips"] = pips
-		var b := Button.new()
+		var b := UiButton.new()
 		b.text = "PRACTICE"
-		b.add_theme_font_size_override("font_size", 32)
+		b.font_px = 32
+		b.icon = "play"
 		var idx := i
 		b.pressed.connect(func(): menu_action.emit("practice:%d" % idx))
 		_career_root.add_child(b)
-		_place(b, 0, 0, 770, y, 280, 70)
+		_place(b, 0, 0, 770, y, 280, 80)
 		row["btn"] = b
 		_cr_rows.append(row)
-	_cr_book = Button.new()
-	_cr_book.add_theme_font_size_override("font_size", 38)
+	_cr_book = UiButton.new()
+	_cr_book.font_px = 34
+	_cr_book.kind = "gold"
+	_cr_book.icon = "stamp"
 	_cr_book.pressed.connect(func(): menu_action.emit("book"))
 	_career_root.add_child(_cr_book)
 	_place(_cr_book, 0, 0, 30, 1700, 700, 120)
-	var back := Button.new()
+	var back := UiButton.new()
 	back.text = "BACK"
-	back.add_theme_font_size_override("font_size", 48)
+	back.font_px = 44
+	back.kind = "ghost"
+	back.icon = "back"
 	back.pressed.connect(func(): menu_action.emit("back"))
 	_career_root.add_child(back)
 	_place(back, 0, 0, 750, 1700, 300, 120)
@@ -537,14 +566,14 @@ func show_career(info: Dictionary) -> void:
 		var row: Dictionary = _cr_rows[i]
 		var on := i < rows.size()
 		(row["name"] as Label).visible = on
-		(row["btn"] as Button).visible = on
+		(row["btn"] as UiButton).visible = on
 		for pip in row["pips"]:
 			(pip as ColorRect).visible = false
 		if not on:
 			continue
 		var r: Dictionary = rows[i]
 		(row["name"] as Label).text = str(r["name"])
-		(row["btn"] as Button).disabled = not bool(info["practice"])
+		(row["btn"] as UiButton).disabled = not bool(info["practice"])
 		var needed := mini(int(r["needed"]), MAX_PIPS)
 		for k in needed:
 			var pip: ColorRect = row["pips"][k]
@@ -666,15 +695,19 @@ func _build_choice() -> void:
 	_ch_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_place(_ch_hint, 0.5, 0, -480, 790, 960, 140)
 	_ch_hint.add_theme_color_override("font_color", Color(0.7, 0.88, 1.0))
-	_ch_cash = Button.new()
+	_ch_cash = UiButton.new()
 	_ch_cash.text = "CASH OUT"
-	_ch_cash.add_theme_font_size_override("font_size", 64)
+	_ch_cash.font_px = 56
+	_ch_cash.kind = "gold"
+	_ch_cash.icon = "cash"
 	_ch_cash.pressed.connect(func(): choice.emit("cashout"))
 	_choice_root.add_child(_ch_cash)
 	_place(_ch_cash, 0, 0, 40, 1010, 480, 230)
-	_ch_keep = Button.new()
+	_ch_keep = UiButton.new()
 	_ch_keep.text = "KEEP FLYING"
-	_ch_keep.add_theme_font_size_override("font_size", 64)
+	_ch_keep.font_px = 56
+	_ch_keep.kind = "primary"
+	_ch_keep.icon = "keep"
 	_ch_keep.pressed.connect(func(): choice.emit("keep"))
 	_choice_root.add_child(_ch_keep)
 	_place(_ch_keep, 0, 0, 560, 1010, 480, 230)
@@ -694,12 +727,15 @@ func show_choice(info: Dictionary) -> void:
 	_ch_pot.text = "POT  %d coins" % int(info["pot"])
 	_ch_next.text = "Next landing pays  x%.1f" % float(info["next_mult"])
 	_ch_hint.text = str(info["hint"])
-	_ch_cash.text = "CASH OUT\n+%d" % int(info["pot"])
+	_ch_cash.text = "CASH OUT"
+	_ch_cash.sub = "+%d" % int(info["pot"])
 	_ch_cash.visible = true
 	_ch_keep.visible = true
 	_ch_count.visible = false
 	_ch_next.visible = true
 	_ch_hint.visible = true
+	_sel_row.visible = false
+	_menu_row.visible = false
 	_choice_root.visible = true
 
 ## CASH OUT was chosen: the buttons go, a big number counts up.
@@ -727,9 +763,9 @@ func choice_visible() -> bool:
 ## The pause button (top-right, clear of the approach view) and the pause menu: Resume / Settings (sound and music volume) / Quit
 ## (with a confirmation). Built once.
 func _build_pause() -> void:
-	_pause_btn = Button.new()
-	_pause_btn.text = "II"
-	_pause_btn.add_theme_font_size_override("font_size", 40)
+	_pause_btn = UiButton.new()
+	_pause_btn.kind = "ghost"
+	_pause_btn.icon = "pause"
 	_pause_btn.focus_mode = Control.FOCUS_NONE
 	_pause_btn.pressed.connect(func(): pause_action.emit("pause"))
 	add_child(_pause_btn)
@@ -756,9 +792,10 @@ func _build_pause() -> void:
 	for i in 3:
 		var ids := ["resume", "settings", "quit"]
 		var texts := ["RESUME", "SETTINGS", "QUIT"]
-		var b := Button.new()
+		var b := UiButton.new()
 		b.text = texts[i]
-		b.add_theme_font_size_override("font_size", 56)
+		b.font_px = 48
+		b.kind = "primary" if i == 0 else "secondary"
 		var id: String = ids[i]
 		b.pressed.connect(func(): pause_action.emit(id))
 		_pz_main.add_child(b)
@@ -782,9 +819,10 @@ func _build_pause() -> void:
 		_pz_settings.add_child(sl)
 		_place(sl, 0, 0, 120, 680 + i * 190, 840, 70)
 		_pz_sliders[nm] = sl
-	var sb := Button.new()
+	var sb := UiButton.new()
 	sb.text = "BACK"
-	sb.add_theme_font_size_override("font_size", 56)
+	sb.font_px = 48
+	sb.icon = "back"
 	sb.pressed.connect(func(): pause_action.emit("settings_back"))
 	_pz_settings.add_child(sb)
 	_place(sb, 0, 0, 190, 1040, 700, 140)
@@ -794,15 +832,18 @@ func _build_pause() -> void:
 	_pz_confirm.add_child(_pz_confirm_text)
 	_pz_confirm_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_place(_pz_confirm_text, 0.5, 0, -440, 560, 880, 300)
-	var yes := Button.new()
+	var yes := UiButton.new()
 	yes.text = "YES, QUIT"
-	yes.add_theme_font_size_override("font_size", 52)
+	yes.font_px = 48
+	yes.kind = "danger"
+	yes.icon = "quit"
 	yes.pressed.connect(func(): pause_action.emit("quit_yes"))
 	_pz_confirm.add_child(yes)
 	_place(yes, 0, 0, 60, 960, 450, 150)
-	var no := Button.new()
+	var no := UiButton.new()
 	no.text = "NO"
-	no.add_theme_font_size_override("font_size", 52)
+	no.font_px = 48
+	no.kind = "primary"
 	no.pressed.connect(func(): pause_action.emit("quit_no"))
 	_pz_confirm.add_child(no)
 	_place(no, 0, 0, 570, 960, 450, 150)
@@ -824,6 +865,8 @@ func pause_button_rect() -> Rect2:
 func show_pause() -> void:
 	_pause_on = true
 	_pause_btn.visible = false
+	_sel_row.visible = false
+	_menu_row.visible = false
 	_pause_root.visible = true
 	show_pause_main()
 
@@ -880,9 +923,10 @@ func _build_hangar() -> void:
 	h2.offset_right = 0
 	for i in Cosmetics.GEAR.size():
 		_hangar_gear.append(_hangar_button("gear", i, 970 + (i / 2) * 110))
-	var back := Button.new()
+	var back := UiButton.new()
 	back.text = "BACK"
-	back.add_theme_font_size_override("font_size", 48)
+	back.font_px = 44
+	back.icon = "back"
 	back.pressed.connect(func(): menu_action.emit("back"))
 	_hangar_root.add_child(back)
 	_place(back, 0.5, 0, -170, 1730, 340, 110)
@@ -896,9 +940,10 @@ func _build_hangar() -> void:
 	for i in Planes.COUNT:
 		_hangar_planes.append(_hangar_button("plane", i, 1370 + (i / 2) * 110))
 
-func _hangar_button(kind: String, idx: int, y: float) -> Button:
-	var b := Button.new()
-	b.add_theme_font_size_override("font_size", 32)
+func _hangar_button(kind: String, idx: int, y: float) -> UiButton:
+	var b := UiButton.new()
+	b.font_px = 32
+	b.icon = "paint" if kind == "paint" else ("cap" if kind == "gear" else "")
 	b.pressed.connect(func(): hangar_pick.emit(kind, idx))
 	_hangar_root.add_child(b)
 	_place(b, 0, 0, 30 + (idx % 2) * 520, y, 500, 96)
@@ -916,13 +961,17 @@ func show_hangar(data: Dictionary, planes_avail: Array = [], plane_now: int = -1
 	for i in _hangar_paint.size():
 		var p: Dictionary = Cosmetics.PAINTS[i]
 		_hangar_paint[i].text = _hangar_label(p["name"], p["cost"], (data["owned_paint"] as Array).has(i), int(data["paint"]) == i)
+		_hangar_paint[i].accent = int(data["paint"]) == i
 		_hangar_paint[i].disabled = false
 	for i in _hangar_gear.size():
 		var g: Dictionary = Cosmetics.GEAR[i]
 		_hangar_gear[i].text = _hangar_label(g["name"], g["cost"], (data["owned_gear"] as Array).has(i), int(data["gear"]) == i)
+		_hangar_gear[i].accent = int(data["gear"]) == i
 	for i in _hangar_planes.size():
 		var pn: String = Planes.NAMES[i]
 		_hangar_planes[i].text = _hangar_label(pn, Planes.price(i), planes_avail.has(i), plane_now == i)
+		_hangar_planes[i].accent = plane_now == i
+		_hangar_planes[i].icon = Icons.aircraft(i)
 	_hangar_root.visible = true
 	_menu_row.visible = false
 	_sel_row.visible = false
@@ -984,7 +1033,7 @@ func ad_visible() -> bool:
 	return _ad_on
 
 func set_menu_button(id: String, text: String, enabled: bool = true) -> void:
-	var b: Button = _menu_buttons[id]
+	var b: UiButton = _menu_buttons[id]
 	b.text = text
 	b.disabled = not enabled
 
@@ -1017,9 +1066,10 @@ func _build_logbook() -> void:
 		lb.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		_log_stamps.append(pn)
 		_log_stamp_names.append(lb)
-	_log_back = Button.new()
+	_log_back = UiButton.new()
 	_log_back.text = "BACK"
-	_log_back.add_theme_font_size_override("font_size", 48)
+	_log_back.font_px = 44
+	_log_back.icon = "back"
 	_log_back.pressed.connect(func(): menu_action.emit("back"))
 	_log_root.add_child(_log_back)
 	_place(_log_back, 0.5, 0.0, -170, 1790, 340, 100)
@@ -1041,10 +1091,13 @@ func _build_logbook() -> void:
 	_log_root.add_child(_log_more)
 	_place(_log_more, 0, 0, 530, 700 + float(rows) * 60.0 - 14.0, 520, 36)
 
-func _sel_button(text: String, dir: int) -> Button:
-	var b := Button.new()
+func _sel_button(text: String, dir: int) -> UiButton:
+	var b := UiButton.new()
 	b.text = text
-	b.add_theme_font_size_override("font_size", 64)
+	b.font_px = 56
+	b.kind = "ghost"
+	b.icon = "back" if dir < 0 else "forward"
+	b.text = ""
 	b.pressed.connect(func(): plane_step.emit(dir))
 	_sel_row.add_child(b)
 	return b
@@ -1053,6 +1106,7 @@ func _sel_button(text: String, dir: int) -> Button:
 func set_plane_choice(id: int) -> void:
 	var pr: Dictionary = Planes.profile(id)
 	_sel_name.text = pr["name"]
+	_sel_icon.glyph = Icons.aircraft(id)
 	var bars := func(v: float, lo: float, hi: float) -> String:
 		var n := clampi(int(roundf((v - lo) / (hi - lo) * 4.0)) + 1, 1, 5)
 		return "#".repeat(n) + "-".repeat(5 - n)
@@ -1081,12 +1135,98 @@ func set_stall(v: float) -> void:
 func _label(size: int, align: HorizontalAlignment) -> Label:
 	var l := Label.new()
 	l.horizontal_alignment = align
+	l.add_theme_font_override("font", Style.font_for("", size))
 	l.add_theme_font_size_override("font_size", size)
 	l.add_theme_constant_override("outline_size", maxi(size / 8, 4))
-	l.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.9))
+	l.add_theme_color_override("font_outline_color", Color(Style.INK, 0.92))
 	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(l)
 	return l
+
+## The studio logo intro: the Clear Prop Games propeller (spinning up, then easing) and its wordmark, fading in and out; a tap skips it. Built once, drawn only while `_logo_t` runs.
+func _build_logo() -> void:
+	_logo_root = ColorRect.new()
+	_logo_root.color = Style.SURFACE_DARK
+	_logo_root.mouse_filter = Control.MOUSE_FILTER_STOP
+	_logo_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_logo_root.visible = false
+	add_child(_logo_root)
+	var mark := UiIcon.new()
+	mark.glyph = "prop"
+	mark.tint = Style.PRIMARY
+	_logo_root.add_child(mark)
+	_place(mark, 0.5, 0.42, -110, -110, 220, 220)
+	mark.pivot_offset = Vector2(110, 110)
+	var nm := _label(Style.SZ_L, HORIZONTAL_ALIGNMENT_CENTER)
+	remove_child(nm)
+	_logo_root.add_child(nm)
+	nm.text = "Clear Prop Games"
+	_place(nm, 0.5, 0.42, -500, 130, 1000, 110)
+	_logo_root.gui_input.connect(func(e: InputEvent):
+		if (e is InputEventMouseButton or e is InputEventScreenTouch) and e.is_pressed():
+			_logo_t = LOGO_SECONDS)
+
+func start_logo() -> void:
+	_logo_t = 0.0
+	for k in _logo_root.get_children():
+		(k as Control).modulate.a = 0.0
+	_logo_root.visible = true
+	set_process(true)
+
+func logo_running() -> bool:
+	return _logo_t >= 0.0
+
+func _process(delta: float) -> void:
+	if _logo_t < 0.0:
+		return
+	_logo_t += delta
+	var a := clampf(_logo_t / 0.4, 0.0, 1.0) * clampf((LOGO_SECONDS - _logo_t) / 0.4, 0.0, 1.0)
+	for k in _logo_root.get_children():
+		(k as Control).modulate.a = a      # (the dark backdrop stays solid: the game behind it is not ready to be seen)
+	var mk: Control = _logo_root.get_child(0)
+	mk.scale = Vector2.ONE * (0.9 + 0.1 * Style.ease_out_back(clampf(_logo_t / 0.6, 0.0, 1.0)))
+	mk.rotation = 14.0 * (1.0 - pow(1.0 - clampf(_logo_t / LOGO_SECONDS, 0.0, 1.0), 3.0))
+	if _logo_t >= LOGO_SECONDS:
+		_logo_t = -1.0
+		_logo_root.visible = false
+		set_process(false)
+		logo_finished.emit()
+
+## Move everything that hugs the top or bottom edge inside the safe area (notch, home bar). Idempotent: works from the designed offsets.
+func apply_safe() -> void:
+	var vs := get_viewport().get_visible_rect().size
+	for c in get_children():
+		if c is Control:
+			_pin_safe(c as Control, vs, true)
+
+func _pin_safe(c: Control, vs: Vector2, top_level: bool) -> void:
+	var full := c.anchor_right == 1.0 and c.anchor_bottom == 1.0 and c.anchor_left == 0.0 and c.anchor_top == 0.0
+	if full and c.offset_right == 0.0 and c.offset_bottom == 0.0:
+		for k in c.get_children():
+			if k is Control:
+				_pin_safe(k as Control, vs, false)
+		return
+	if c.anchor_top != c.anchor_bottom:
+		return
+	if not c.has_meta("base_top"):
+		c.set_meta("base_top", c.offset_top)
+		c.set_meta("base_bottom", c.offset_bottom)
+		c.set_meta("base_left", c.offset_left)
+		c.set_meta("base_right", c.offset_right)
+	var y: float = c.anchor_top * vs.y + float(c.get_meta("base_top"))
+	var dy := 0.0
+	if c.anchor_top == 0.0 and y < Style.safe_top + 60.0 and not (c is ColorRect and c.size.x > 600.0):
+		dy = Style.safe_top
+	elif c.anchor_top == 1.0 or y + c.size.y > vs.y - 140.0 - Style.safe_bottom and c.anchor_top > 0.5 and y > vs.y * 0.8:
+		dy = -Style.safe_bottom
+	c.offset_top = float(c.get_meta("base_top")) + dy
+	c.offset_bottom = float(c.get_meta("base_bottom")) + dy
+	if c.anchor_left == 1.0:
+		c.offset_left = float(c.get_meta("base_left")) - Style.safe_right
+		c.offset_right = float(c.get_meta("base_right")) - Style.safe_right
+	elif c.anchor_left == 0.0 and c.anchor_right == 0.0:
+		c.offset_left = float(c.get_meta("base_left")) + Style.safe_left
+		c.offset_right = float(c.get_meta("base_right")) + Style.safe_left
 
 ## Anchor at (ax, ay) (fractions of the screen) then offset by (x, y) with size (w, h) in pixels.
 func _place(c: Control, ax: float, ay: float, x: float, y: float, w: float, h: float) -> void:

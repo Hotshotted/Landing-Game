@@ -2773,6 +2773,70 @@ func run_all() -> void:
 	check(CAR.fee(7) <= int(greasers) and CAR.fee(1) < casual, "(and the examiner's fees stay within a cash-out or two)")
 	force(-1, -1)
 
+	print("== 27. the shared style (docs/style.md): tokens, icons, buttons, safe areas ==  [nodes %d]" % nodes())
+	var sty27 = load("res://scripts/Style.gd")
+	var ico27 = load("res://scripts/Icons.gd")
+	check(sty27.contrast(sty27.TEXT, sty27.SURFACE_DARK) >= 4.5 and sty27.contrast(sty27.TEXT_SOFT, sty27.SURFACE_DARK) >= 4.5 and sty27.contrast(sty27.TEXT_ON_LIGHT, sty27.SURFACE_LIGHT) >= 4.5, "text on the dark and light surfaces has 4.5:1 contrast (%.1f / %.1f / %.1f)" % [sty27.contrast(sty27.TEXT, sty27.SURFACE_DARK), sty27.contrast(sty27.TEXT_SOFT, sty27.SURFACE_DARK), sty27.contrast(sty27.TEXT_ON_LIGHT, sty27.SURFACE_LIGHT)])
+	check(sty27.contrast(sty27.TEXT, sty27.SURFACE_DARK_2) >= 4.5 and sty27.contrast(sty27.INK, sty27.ACCENT) >= 4.5, "(selected surface and gold keep their contrast)")
+	check(sty27.display() != null and sty27.text() != null and sty27.font_for("FLY", sty27.SZ_S) == sty27.text() and sty27.font_for("FLY", sty27.SZ_XL) == sty27.display() and sty27.font_for("12", sty27.SZ_S) == sty27.display(), "Fredoka for display and numbers, Nunito for text")
+	var missing27: Array[String] = []
+	for id in ico27.IDS:
+		if not ico27.has(id):
+			missing27.append(id)
+	for i in 5:
+		if not ico27.has(ico27.aircraft(i)):
+			missing27.append("aircraft%d" % i)
+	for i in 8:
+		if not ico27.has(ico27.rank(i)):
+			missing27.append("rank%d" % i)
+	for i in ico27.LANDING.size():
+		if not ico27.has(ico27.landing(i)):
+			missing27.append("landing%d" % i)
+	for i in ico27.WEATHER.size():
+		if not ico27.has(ico27.weather(i)):
+			missing27.append("weather%d" % i)
+	check(missing27.is_empty() and ico27.IDS.size() >= 60, "an icon for every stat, aircraft, rank, landing type and weather (%d icons)" % ico27.IDS.size())
+	var hb27: Array = main.hud.find_children("*", "UiButton", true, false)
+	var sm27 := 0
+	var bare27 := 0
+	for b in hb27:
+		if b.size.y < 80.0 or b.size.x < 80.0:
+			sm27 += 1
+		if b.text == "" and b.icon == "":
+			bare27 += 1
+		if b.icon != "" and not ico27.has(b.icon):
+			bare27 += 1
+	check(hb27.size() >= 15 and sm27 == 0 and bare27 == 0, "%d buttons, every one touch-sized (80 px+) and with a label or a known icon" % hb27.size())
+	var ub27 = hb27[0]
+	var downs27 := [0]
+	ub27.pressed_down.connect(func(): downs27[0] += 1)
+	ub27.disabled = true
+	ub27.disabled = false
+	check(not ub27.is_down() and ub27.press_amount == 0.0, "a button starts up, and disabling releases it")
+	var okbtn27: bool = true
+	for kind in ["primary", "gold", "danger", "secondary", "ghost"]:
+		ub27.kind = kind
+		okbtn27 = okbtn27 and ub27.kind == kind
+	check(okbtn27, "primary, gold, danger, secondary and ghost kinds exist")
+	sty27.set_safe(90.0, 50.0)
+	main.hud.apply_safe()
+	check(is_equal_approx(main.hud._pause_btn.offset_top, 14.0 + 90.0), "a notch pushes the pause button down inside the safe area (%.0f)" % main.hud._pause_btn.offset_top)
+	sty27.set_safe(0.0, 0.0)
+	main.hud.apply_safe()
+	check(is_equal_approx(main.hud._pause_btn.offset_top, 14.0), "...and no notch puts it back")
+	DF.parse([] as Array[String])
+	var stamp_off: bool = not DF.stamp_enabled() and not main.hud._stamp.visible
+	DF.parse(["debug"] as Array[String])
+	var d_on: bool = DF.stamp_enabled()
+	DF.parse(["tune"] as Array[String])
+	var t_on: bool = DF.stamp_enabled()
+	DF.parse(["perf"] as Array[String])
+	check(stamp_off and d_on and t_on and DF.stamp_enabled(), "the build stamp is hidden from players and shown only with ?debug, ?tune or ?perf")
+	check(main.hud._logo_root.get_child(1).text == "Clear Prop Games" and ico27.has("prop"), "the logo intro says Clear Prop Games, with the propeller mark")
+	DF.parse(["nologo"] as Array[String])
+	check(DF.nologo, "?nologo skips the studio intro")
+	DF.parse([] as Array[String])
+
 	print("== 9. debug flags / frame time ==  [nodes %d]" % nodes())
 	DF.parse(["nofx=smoke,shake", "perf", "round=4", "seed=9", "bogus"] as Array[String])
 	check(DF.off("smoke") and DF.off("shake") and not DF.off("popup"), "?nofx=smoke,shake switches just those off")

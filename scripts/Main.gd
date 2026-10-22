@@ -146,6 +146,12 @@ func _ready() -> void:
 	add_child(fog)
 	hud = Hud.new()
 	add_child(hud)
+	UiButton.on_down = func():
+		sfx.play(Sfx.TAP, 1.0, -8.0)
+		if DisplayServer.get_name() != "headless":
+			Input.vibrate_handheld(8)
+	Style.detect_safe(get_viewport().get_visible_rect().size)
+	hud.apply_safe()
 	hud.plane_step.connect(_on_plane_step)
 	hud.menu_action.connect(_on_menu_action)
 	hud.choice.connect(_on_choice)
@@ -174,6 +180,7 @@ func _ready() -> void:
 		if DebugFlags.prewarm_enabled():
 			_prewarm()
 	if not _warming:
+		await _logo_intro()
 		_show_menu()
 		if tune_panel:
 			tune_panel.set_available(true)
@@ -190,6 +197,15 @@ func _setup_environment() -> void:
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)
+
+## The studio logo, once, at the first start (skipped headless, with ?nologo and when a screen is opened on purpose).
+func _logo_intro() -> void:
+	if OS.has_feature("web"):
+		JavaScriptBridge.eval("window.gameReady && window.gameReady()")     # (the page's loading screen fades out)
+	if DebugFlags.nologo or DisplayServer.get_name() == "headless" or DebugFlags.screen() != "":
+		return
+	hud.start_logo()
+	await hud.logo_finished
 
 ## First-use stutter fix: GL shaders / particle buffers / font glyphs set themselves up the first time they are
 ## used. So at boot, behind a splash, draw EVERY pooled thing for real (every tree, dash, streak, smoke and fire
@@ -229,6 +245,7 @@ func _prewarm() -> void:
 		tune_panel.prewarm_show(false)
 		tune_panel.set_available(true)
 	_warming = false
+	await _logo_intro()
 	_show_menu()
 	_open_debug_screen()
 
@@ -1083,6 +1100,8 @@ func _on_tuning_changed(property: String) -> void:
 # ---------- input ----------
 
 func _input(event: InputEvent) -> void:
+	if hud.logo_running():
+		return
 	# A touch on the tuning panel's TUNE button belongs to the button, not the game.
 	if (event is InputEventScreenTouch or event is InputEventScreenDrag) and TunePanel.button_hit(event.position):
 		return
