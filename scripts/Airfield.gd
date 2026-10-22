@@ -112,6 +112,11 @@ var _wires: Array[MeshInstance3D] = []
 var _lights: Array[MeshInstance3D] = []
 var _light_mats: Array[StandardMaterial3D] = []
 var _light_used := 0
+var _halo_mats: Array[StandardMaterial3D] = []
+var _tz_bars: Array[MeshInstance3D] = []        # touchdown-zone marks
+var _edge_lines: Array[MeshInstance3D] = []     # runway edge stripes
+var _sign_board: MeshInstance3D                 # the runway number on its sign
+var _sign_label: Label3D
 var _approach_first := 0
 var _approach_count := 0
 var _ramp_root: Node3D
@@ -271,6 +276,37 @@ func _build_scenario_pools() -> void:
 		lm.scale = Vector3(0.7, 0.7, 0.7)
 		_lights.append(lm)
 		_light_mats.append(lm.material_override as StandardMaterial3D)
+	var hq := QuadMesh.new()
+	hq.size = Vector2(3.6, 3.6)
+	for i in MAX_LIGHTS:
+		var h := MeshInstance3D.new()
+		h.mesh = hq
+		var hm := StandardMaterial3D.new()
+		hm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		hm.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+		hm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		hm.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+		hm.albedo_color = Color(1, 0.95, 0.7, 0.3)
+		h.material_override = hm
+		h.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		_lights[i].add_child(h)
+		_halo_mats.append(hm)
+	# runway details: touchdown-zone marks, edge stripes, the number on a sign
+	for i in 6:
+		_tz_bars.append(_mi(_box, Color(0.95, 0.95, 0.9), false, _rwy_root))
+	for i in 2:
+		_edge_lines.append(_mi(_box, Color(0.95, 0.95, 0.9), false, _rwy_root))
+	_sign_board = _mi(_box, Color(0.1, 0.34, 0.22), true, _rwy_root)
+	_sign_label = Label3D.new()
+	_sign_label.font = Style.display()
+	_sign_label.font_size = 96
+	_sign_label.pixel_size = 0.032
+	_sign_label.outline_size = 14
+	_sign_label.outline_modulate = Style.INK
+	_sign_label.modulate = Color.WHITE
+	_sign_label.shaded = false
+	_sign_label.text = "18"
+	_rwy_root.add_child(_sign_label)
 	var rmat := StandardMaterial3D.new()
 	rmat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	rmat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
@@ -605,6 +641,29 @@ func build() -> void:
 	for k in 2:
 		var side := -1.0 if k == 0 else 1.0
 		_place(_aim_slabs[k], Vector3(aim_x, 0.06, side * _half_z * 0.5), Vector3(20.0, 0.03, 1.3))
+	for k in 3:
+		for side in 2:
+			var tz := _tz_bars[k * 2 + side]
+			var zz := (-1.0 if side == 0 else 1.0) * _half_z * 0.5
+			_place(tz, Vector3(aim_x + 34.0 * float(k + 1), 0.055, zz), Vector3(11.0, 0.03, 1.0))
+			_set_color(tz, line_col)
+			tz.visible = paint and aim_x + 34.0 * float(k + 1) < rwy_end - 30.0
+	for side in 2:
+		var el := _edge_lines[side]
+		_place(el, Vector3((thr + rwy_end) * 0.5, 0.052, (-1.0 if side == 0 else 1.0) * (_half_z - 0.55)), Vector3(rwy_len - 6.0, 0.03, 0.35))
+		_set_color(el, line_col)
+		el.visible = paint
+	var show_sign := paint and surface != DECK
+	_sign_board.visible = show_sign
+	_sign_label.visible = show_sign
+	if show_sign:
+		var sx := thr + 24.0
+		var sz := -(_half_z * _zs + 5.0)
+		_place(_sign_board, Vector3(sx, 2.0, sz), Vector3(7.0, 4.0, 0.35))
+		_sign_label.position = Vector3(sx, 2.0, sz + 0.25)
+		var num := str(int(rwy_len / 4.0) % 35 + 1).pad_zeros(2)
+		if _sign_label.text != num:
+			_sign_label.text = num
 	_place(_end_bar, Vector3(rwy_end - 0.6, 0.06, 0.0), Vector3(1.2, 0.03, _half_z * 2.0))
 	_end_bar.visible = surface != WATER
 	# carrier wires
@@ -705,6 +764,7 @@ func _set_light(pos: Vector3, color: Color) -> void:
 		return
 	_lights[_light_used].position = pos
 	_light_mats[_light_used].albedo_color = color
+	_halo_mats[_light_used].albedo_color = Color(color.r, color.g, color.b, 0.3)
 	_light_used += 1
 
 ## Posts and the PAPI sit just outside the runway edge, which moves out when the runway is stretched in z; they ride on

@@ -8,6 +8,7 @@ signal coin_arrived
 const MAX := 96
 const COIN := 0
 const CONFETTI := 1
+const FALLING := 2
 const CONFETTI_COLORS: Array[Color] = [Style.PRIMARY, Style.ACCENT, Style.SUCCESS, Style.DANGER, Style.WARNING, Color.WHITE]
 
 var _on := PackedByteArray()
@@ -88,6 +89,22 @@ func confetti(origin: Vector2, n: int) -> void:
 		_active += 1
 	set_process(true)
 
+## `n` coins thrown out from `from` that tumble down and out of the screen (the pot being lost).
+func scatter_coins(from: Vector2, n: int) -> void:
+	for k in n:
+		var i := _slot()
+		if i < 0:
+			return
+		_on[i] = 1
+		_kind[i] = FALLING
+		_pos[i] = from + Vector2(_rng.randf_range(-30.0, 30.0), 0.0)
+		_vel[i] = Vector2(_rng.randf_range(-420.0, 420.0), -_rng.randf_range(300.0, 800.0))
+		_t[i] = -float(k) * 0.02
+		_dur[i] = 2.6
+		_size[i] = 24.0
+		_active += 1
+	set_process(true)
+
 func clear() -> void:
 	for i in MAX:
 		_on[i] = 0
@@ -115,6 +132,12 @@ func _process(delta: float) -> void:
 				_on[i] = 0
 				_active -= 1
 				coin_arrived.emit()
+		elif _kind[i] == FALLING:
+			_vel[i].y += 1700.0 * delta
+			_pos[i] += _vel[i] * delta
+			if _t[i] >= _dur[i] or _pos[i].y > size.y + 60.0:
+				_on[i] = 0
+				_active -= 1
 		else:
 			_vel[i].y += 1500.0 * delta
 			_vel[i].x *= 1.0 - delta * 0.8
@@ -135,6 +158,8 @@ func _draw() -> void:
 		if _kind[i] == COIN:
 			var k := clampf(_t[i] / _dur[i], 0.0, 1.0)
 			Icons.glyph(self, "coin", _pos[i], _size[i] * (0.8 + 0.4 * sin(k * PI)))
+		elif _kind[i] == FALLING:
+			Icons.glyph(self, "coin", _pos[i], _size[i], Color(1, 1, 1, clampf((_dur[i] - _t[i]) / 0.6, 0.0, 1.0)))
 		else:
 			var fade := clampf((_dur[i] - _t[i]) / 0.5, 0.0, 1.0)
 			var sq := absf(cos(_rot[i] * 1.7))
@@ -146,3 +171,4 @@ func _draw() -> void:
 func show_all() -> void:
 	fly_coins(Vector2(300, 600), Vector2(700, 300), 4)
 	confetti(Vector2(540, 900), 12)
+	scatter_coins(Vector2(540, 700), 6)

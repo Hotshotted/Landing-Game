@@ -189,8 +189,19 @@ func _ready() -> void:
 
 func _setup_environment() -> void:
 	var env := Environment.new()
-	env.background_mode = Environment.BG_COLOR
+	env.background_mode = Environment.BG_CANVAS      # the sky is a gradient shader on a canvas layer behind the 3D world
+	env.background_canvas_max_layer = -1
 	env.background_color = Color(0.55, 0.78, 0.96)
+	_sky_layer = CanvasLayer.new()
+	_sky_layer.layer = -1
+	add_child(_sky_layer)
+	_sky_rect = ColorRect.new()
+	_sky_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_sky_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_sky_mat = ShaderMaterial.new()
+	_sky_mat.shader = preload("res://shaders/sky.gdshader")
+	_sky_rect.material = _sky_mat
+	_sky_layer.add_child(_sky_rect)
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	env.ambient_light_color = Color(0.85, 0.88, 0.95)
 	env.ambient_light_energy = 0.55
@@ -273,6 +284,7 @@ func _open_debug_screen() -> void:
 
 func _show_menu() -> void:
 	state = MENU
+	music.set_tension(0.0)
 	hud.hide_card()
 	mode = FREE
 	hud.set_pot(0, 1.0, false)
@@ -469,28 +481,85 @@ func _end_card() -> void:
 
 ## Night / rain tint the sky and the light; fog and rain are drawn by the FogOverlay (see _update_fog).
 func _apply_environment() -> void:
-	var sky := Color(0.55, 0.78, 0.96)
+	var tod := time_of_day()
+	var top := Color("4a8ff0")
+	var mid := Color("8fc8ff")
+	var horizon := Color("d6ecff")
+	var sun_c := Color(1.0, 0.95, 0.8)
+	var sun_xy := Vector2(0.78, 0.26)
+	var sun_glow := 0.35
+	var stars := 0.0
 	var ambient := Color(0.85, 0.88, 0.95)
 	var energy := 0.55
 	var sun_energy := 1.0
+	var light_c := Color.WHITE
+	var sun_pitch := -0.7
+	if tod == 1:      # golden hour: warm low sun
+		top = Color("5a6fc8")
+		mid = Color("ffb08a")
+		horizon = Color("ffe0b0")
+		sun_c = Color(1.0, 0.72, 0.4)
+		sun_xy = Vector2(0.82, 0.5)
+		sun_glow = 0.6
+		ambient = Color(1.0, 0.82, 0.7)
+		energy = 0.5
+		sun_energy = 1.05
+		light_c = Color(1.0, 0.8, 0.6)
+		sun_pitch = -0.32
 	if airfield.night:
-		sky = Color(0.03, 0.05, 0.12)
+		top = Color("050a1c")
+		mid = Color("0b1530")
+		horizon = Color("1c2c52")
+		sun_c = Color(0.8, 0.85, 1.0)
+		sun_xy = Vector2(0.2, 0.2)
+		sun_glow = 0.1
+		stars = 1.0
 		ambient = Color(0.4, 0.46, 0.7)
 		energy = 0.34
 		sun_energy = 0.14
+		light_c = Color(0.7, 0.78, 1.0)
 	elif weather == Scenarios.RAIN:
-		sky = Color(0.5, 0.57, 0.65)
+		top = Color("56626f")
+		mid = Color("7f93ab")
+		horizon = Color("a9b8c8")
+		sun_glow = 0.0
 		ambient = Color(0.75, 0.78, 0.85)
 		sun_energy = 0.7
 	elif weather == Scenarios.FOG:
-		sky = Color(0.78, 0.83, 0.88)
+		top = Color("b7c2cc")
+		mid = Color("c9d3dc")
+		horizon = Color("dfe6ec")
+		sun_glow = 0.1
+		ambient = Color(0.85, 0.88, 0.92)
 		sun_energy = 0.85
-	_env.background_color = sky
+	elif weather == Scenarios.TURBULENCE or weather == Scenarios.SHEAR:
+		top = top.darkened(0.12)
+		mid = mid.lerp(Color("9aa8b8"), 0.35)
+		sun_glow *= 0.7
+	_sky_mat.set_shader_parameter("top", top)
+	_sky_mat.set_shader_parameter("mid", mid)
+	_sky_mat.set_shader_parameter("horizon", horizon)
+	_sky_mat.set_shader_parameter("sun_color", sun_c)
+	_sky_mat.set_shader_parameter("sun_pos", sun_xy)
+	_sky_mat.set_shader_parameter("sun_glow", sun_glow)
+	_sky_mat.set_shader_parameter("stars", stars)
+	_env.background_color = mid
 	_env.ambient_light_color = ambient
 	_env.ambient_light_energy = energy
 	sun.light_energy = sun_energy
+	sun.light_color = light_c
+	sun.look_at_from_position(Vector3.ZERO, Vector3(0.35, sun_pitch, -0.62))
+
+## 0 = day, 1 = golden hour: chosen per round from the round number and seed (cosmetic only; it never touches the game's random numbers).
+func time_of_day() -> int:
+	if DebugFlags.tod_forced() >= 0:
+		return DebugFlags.tod_forced()
+	return 1 if (hash(round_no * 7919 + DebugFlags.seed_number() + 3) % 100) < 30 else 0
 
 var _gust_scale := 0.5
+var _sky_layer: CanvasLayer
+var _sky_rect: ColorRect
+var _sky_mat: ShaderMaterial
 
 func _terrain_text() -> String:
 	match airfield.terrain:
@@ -523,6 +592,8 @@ func available_planes() -> Array[int]:
 	for p in Save.data["owned_planes"]:
 		if not out.has(int(p)):
 			out.append(int(p))
+	if DebugFlags.plane_forced() >= 0 and not out.has(DebugFlags.plane_forced()):
+		out.append(DebugFlags.plane_forced())        # (?plane=jet flies it whatever your rank)
 	out.sort()
 	return out
 
@@ -857,6 +928,9 @@ func _touchdown() -> void:
 			sfx.play(Sfx.CHIME, 1.0 + 0.12 * float(1 - g), -6.0)
 	var power := clampf(0.25 + sink / 5.0, 0.2, 1.0)
 	fx.smoke(wheels, power, airfield.smoke_color())
+	if airfield.surface == Airfield.ASPHALT or airfield.surface == Airfield.DECK:
+		fx.tire(wheels, power)
+		sfx.play(Sfx.SKID, rng.randf_range(0.9, 1.1), -9.0 + minf(sink, 4.0) * 1.5)
 	sfx.play(Sfx.SQUEAK, rng.randf_range(0.9, 1.15), -4.0 + minf(sink, 4.0))
 	if sink > 1.6:
 		sfx.play(Sfx.THUD, rng.randf_range(0.9, 1.1), -6.0 + minf(sink, 4.0) * 1.5)
@@ -906,11 +980,18 @@ func _crash(reason: String) -> void:
 		_coins_award = 0
 	_awarded = 0
 	hud.set_strikes(0, 0) if mode == FREE else hud.set_strikes(strikes, strikes_max())
+	music.set_tension(0.0)
 	hud.popup("CRASH", reason + lost_text, Color(1.0, 0.35, 0.3), Tuning.crash_pause)
 	hud.set_hint("")
 	fx.crash(Vector3(aircraft.x, maxf(aircraft.y, aircraft.gy) + 1.5, 0.5))
 	fx.smoke(Vector3(aircraft.x, aircraft.gy + 0.4, 1.0), 1.0, Color(0.25, 0.25, 0.25))
+	var pr: Dictionary = Planes.profile(plane_id)
+	fx.debris(Vector3(aircraft.x, maxf(aircraft.y, aircraft.gy) + 1.0, 0.5), pr["body"], pr["accent"], aircraft.gy)
+	fx.burn(Vector3(aircraft.x, aircraft.gy + 0.6, 1.0))
 	sfx.play(Sfx.CRASH, 1.0, 0.0)
+	if mode == FREE and pot_lost > 0:
+		hud.show_pot_lost(pot_lost)
+		sfx.play(Sfx.BOOM, 1.0, -2.0)
 	if not DebugFlags.off("shake"):
 		_shake = 1.0
 	if not DebugFlags.off("haptic"):
@@ -920,6 +1001,7 @@ func _crash(reason: String) -> void:
 	_timer = 0.0
 
 func _leave_crash() -> void:
+	hud.hide_pot_lost()
 	_finish_round(strikes >= strikes_max())
 
 ## The landing (or crash) is over: fade out, then a new approach (or the end of the run).
@@ -991,6 +1073,8 @@ func _compute_full_frame() -> void:
 ## 0 = the wide framing at the start of the approach, 1 = the close flare framing. Driven by the distance to the aim
 ## markers (and forced by a low altitude), eased so the zoom starts and ends gently.
 func _closeness() -> float:
+	if DebugFlags.closeup_enabled():
+		return 1.0
 	var d0 := maxf(airfield.aim_x - _start_x, 1.0)
 	var d := airfield.aim_x - aircraft.x
 	var by_dist := clampf((d0 - d) / maxf(d0 - Tuning.zoom_close_distance, 1.0), 0.0, 1.0)
@@ -1018,6 +1102,9 @@ func _update_camera(dt: float, snap: bool = false) -> void:
 	var b := _closeness()
 	_cam_w = lerpf(_cam_w, lerpf(_full_w, Tuning.view_width_low, b), k)
 	var left := lerpf(_full_left, aircraft.x - _cam_w * Tuning.plane_screen_x, b)
+	if state == CRASH:      # the camera eases in on the wreck and stays with it
+		_cam_w = lerpf(_cam_w, Tuning.view_width_low * 0.7, k)
+		left = lerpf(left, aircraft.x - _cam_w * 0.5, 0.5)
 	var old_x := _cam_x
 	_cam_x = left + _cam_w * 0.5
 	_cam_dx = 0.0 if snap else _cam_x - old_x
@@ -1104,6 +1191,8 @@ func _on_ui_sound(kind: String) -> void:
 			sfx.play(Sfx.COIN, 1.0 + rng.randf_range(-0.08, 0.2), -10.0)
 		"sign":
 			sfx.play(Sfx.SIGN, 1.0, -8.0)
+		"fanfare":
+			sfx.play(Sfx.FANFARE, 1.0, -9.0)
 
 func _on_tuning_changed(property: String) -> void:
 	if property == "outline_thickness":
@@ -1681,12 +1770,14 @@ func _enter_choice() -> void:
 	hud.set_hint("")
 	hud.show_choice({"title": "LANDED!", "pot": pot, "next_mult": pot_multiplier(), "hint": _next_hint()})
 	sfx.play(Sfx.CHIME, 1.0, -6.0)
+	music.set_tension(clampf(0.5 + 0.1 * float(landings), 0.5, 1.0))      # the heartbeat comes in: the pot is on the line
 
 func _on_choice(kind: String) -> void:
 	if state != CHOICE:
 		return
 	match kind:
 		"keep":
+			music.set_tension(clampf(0.3 + 0.1 * float(landings), 0.3, 0.9))     # ... and stays under the next approach
 			hud.hide_choice()
 			_after_fade_over = false
 			state = FADE
@@ -1701,6 +1792,8 @@ func _start_cashout() -> void:
 	_cash_shown = 0
 	hud.show_cashout()
 	hud.fly_coins_to_bank(pot)
+	hud.confetti_burst()
+	music.set_tension(0.0)
 
 ## The count-up: the number eases up to the pot with a tick for every few coins, gold sparkles at the end, then the run is over.
 func _step_cashout(dt: float) -> void:
@@ -1720,6 +1813,8 @@ func _step_cashout(dt: float) -> void:
 		sfx.play(Sfx.CHIME, 1.5, -2.0)
 		fx.sparkle(Vector3(aircraft.x, 6.0, 1.0), 4)
 		fx.sparkle(Vector3(aircraft.x + 6.0, 9.0, 1.0), 3)
+		hud.confetti_burst()
+		sfx.play(Sfx.FANFARE, 1.0, -6.0)
 	if p >= 1.0 and _cash_t >= dur + 0.7:
 		_finish_cashout()
 

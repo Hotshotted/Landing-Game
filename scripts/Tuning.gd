@@ -244,7 +244,7 @@ var shake_decay := 5.0
 var shake_size := 1.2
 ## How long the grade popup stays up, and the pause after a crash.
 var popup_time := 1.7
-var crash_pause := 1.9
+var crash_pause := 2.6
 var fade_time := 0.25
 ## Tire smoke and dust.
 var smoke_count := 22

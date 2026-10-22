@@ -12,10 +12,10 @@ var _wind: Label
 var _runway: Label
 var _alt: Label
 var _sink: Label
-var _speed_bar: ColorRect
-var _speed_back: ColorRect
-var _stall_mark: ColorRect
-var _speed_band: ColorRect          # the Vref tolerance band on the airspeed bar
+var _speed_bar: UiBar
+var _speed_back: UiBar
+var _stall_mark: UiBar
+var _speed_band: UiBar          # the Vref tolerance band on the airspeed bar
 var _band_lo := 0.9
 var _band_hi := 1.15
 var _speed_label: Label
@@ -68,6 +68,8 @@ var _hangar_planes: Array[UiButton] = []
 var _pot: Label
 var _choice_root: Control
 var _ch_title: Label
+var _ch_icon: UiIcon
+var _ch_chip: Panel
 var _ch_pot: Label
 var _ch_next: Label
 var _ch_hint: Label
@@ -127,6 +129,10 @@ var _pop_title: Label
 var _pop_sub: Label
 var _pop_t := 99.0
 var _pop_len := 1.7
+var _pop_panel: Panel
+var _pop_stars: Array[UiIcon] = []
+var _pop_grade := -1
+var _streak_flame: UiIcon
 var _pop_color := Color.WHITE
 var _overlay: ColorRect
 var _ov_title: Label
@@ -155,6 +161,8 @@ var _bank_icon: UiIcon
 var _cr_sig: Label
 var _cert_seal: Control
 var _slip_seal: Control
+var _lost_seal: Control
+var _lost_label: Label
 var _log_seen := {}
 var _pot_shown := 0.0
 var _pot_tgt := 0.0
@@ -211,7 +219,13 @@ func _ready() -> void:
 	_pot.modulate = Color(1.0, 0.85, 0.3)
 	_pot.visible = false
 	_streak_label = _label(46, HORIZONTAL_ALIGNMENT_LEFT)
-	_place(_streak_label, 0, 0, 24, 236, 520, 70)
+	_place(_streak_label, 0, 0, 96, 236, 520, 70)
+	_streak_flame = UiIcon.new()
+	_streak_flame.glyph = "flame"
+	add_child(_streak_flame)
+	_place(_streak_flame, 0, 0, 20, 232, 70, 70)
+	_streak_flame.pivot_offset = Vector2(35, 35)
+	_streak_flame.visible = false
 	_streak_label.visible = false
 	_scn_label = _label(26, HORIZONTAL_ALIGNMENT_LEFT)
 	_place(_scn_label, 0, 0, 24, 198, 520, 34)
@@ -224,24 +238,28 @@ func _ready() -> void:
 	_place(_alt, 1, 0, -300, 118, 280, 40)
 	_sink = _label(46, HORIZONTAL_ALIGNMENT_RIGHT)
 	_place(_sink, 1, 0, -400, 160, 380, 56)
-	_speed_back = ColorRect.new()
-	_speed_back.color = Color(0, 0, 0, 0.45)
-	_speed_back.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_speed_back = UiBar.new()
+	_speed_back.color = Color(Style.SURFACE_DARK, 0.62)
+	_speed_back.radius = 11
+	_speed_back.border = Color(Style.LINE, 0.55)
+	_speed_back.border_w = 2
 	_place(_speed_back, 1, 0, -300, 232, 280, 22)
 	add_child(_speed_back)
-	_speed_band = ColorRect.new()
-	_speed_band.color = Color(0.4, 0.9, 1.0, 0.5)
-	_speed_band.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_speed_band = UiBar.new()
+	_speed_band.color = Color(Style.PRIMARY, 0.55)
+	_speed_band.radius = 8
 	_place(_speed_band, 1, 0, -300, 228, 40, 30)
 	add_child(_speed_band)
-	_speed_bar = ColorRect.new()
-	_speed_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_speed_bar = UiBar.new()
+	_speed_bar.radius = 7
 	_place(_speed_bar, 1, 0, -296, 236, 100, 14)
 	add_child(_speed_bar)
-	_stall_mark = ColorRect.new()
-	_stall_mark.color = Color(1, 0.3, 0.25)
-	_stall_mark.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_place(_stall_mark, 1, 0, -300, 228, 4, 30)
+	_stall_mark = UiBar.new()
+	_stall_mark.color = Style.DANGER
+	_stall_mark.radius = 2
+	_stall_mark.border = Style.INK
+	_stall_mark.border_w = 1
+	_place(_stall_mark, 1, 0, -300, 226, 5, 34)
 	add_child(_stall_mark)
 	_speed_label = _label(24, HORIZONTAL_ALIGNMENT_RIGHT)
 	_place(_speed_label, 1, 0, -300, 258, 280, 32)
@@ -250,6 +268,20 @@ func _ready() -> void:
 	_hint = _label(40, HORIZONTAL_ALIGNMENT_CENTER)
 	_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_place(_hint, 0.5, 1, -440, -380, 880, 200)
+	_pop_panel = Panel.new()
+	_pop_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_pop_panel)
+	_place(_pop_panel, 0, 0.3, 90, -50, 900, 400)
+	_pop_panel.pivot_offset = Vector2(450, 200)
+	_pop_panel.modulate.a = 0.0
+	for i in 3:
+		var st := UiIcon.new()
+		st.glyph = "star"
+		add_child(st)
+		_place(st, 0, 0.3, 370.0 + float(i) * 125.0 - 40.0, -150, 110, 110)
+		st.pivot_offset = Vector2(55, 55)
+		st.modulate.a = 0.0
+		_pop_stars.append(st)
 	_pop_title = _label(140, HORIZONTAL_ALIGNMENT_CENTER)
 	_place(_pop_title, 0, 0.3, 0, 0, 1080, 170)
 	_pop_title.anchor_right = 1.0
@@ -269,8 +301,13 @@ func _ready() -> void:
 	_papi_back = Panel.new()
 	_papi_back.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var back_style := StyleBoxFlat.new()
-	back_style.bg_color = Color(0.04, 0.06, 0.1, 0.5)
-	back_style.set_corner_radius_all(48)
+	back_style.bg_color = Color(Style.SURFACE_DARK, 0.72)
+	back_style.set_corner_radius_all(Style.R_L + 8)
+	back_style.set_border_width_all(3)
+	back_style.border_color = Color(Style.LINE, 0.6)
+	back_style.shadow_color = Style.SHADOW_COLOR
+	back_style.shadow_size = Style.SHADOW_SIZE
+	back_style.shadow_offset = Style.SHADOW_OFFSET
 	_papi_back.add_theme_stylebox_override("panel", back_style)
 	_papi_row.add_child(_papi_back)
 	for i in 4:
@@ -278,7 +315,7 @@ func _ready() -> void:
 		light.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		var st := StyleBoxFlat.new()
 		st.bg_color = Color(1, 1, 1)
-		st.border_color = Color(0, 0, 0, 0.95)
+		st.border_color = Style.INK
 		light.add_theme_stylebox_override("panel", st)
 		_papi_row.add_child(light)
 		_papi_lights.append(light)
@@ -726,31 +763,49 @@ func _build_choice() -> void:
 	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_choice_root.add_child(dim)
-	_ch_title = _label(120, HORIZONTAL_ALIGNMENT_CENTER)
+	var card := Panel.new()
+	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var cs := Style.box(Color(Style.SURFACE_DARK, 0.9), Style.LINE, Style.R_L, 4)
+	card.add_theme_stylebox_override("panel", cs)
+	_choice_root.add_child(card)
+	_place(card, 0, 0, 40, 300, 1000, 760)
+	_ch_icon = UiIcon.new()
+	_ch_icon.glyph = "pot"
+	_choice_root.add_child(_ch_icon)
+	_place(_ch_icon, 0.5, 0, -75, 470, 150, 150)
+	_ch_icon.pivot_offset = Vector2(75, 75)
+	var chip := Panel.new()
+	chip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	chip.add_theme_stylebox_override("panel", Style.box(Color(Style.ACCENT, 0.18), Style.ACCENT, Style.R_PILL, 3, false))
+	_choice_root.add_child(chip)
+	_place(chip, 0.5, 0, -400, 800, 800, 84)
+	_ch_chip = chip
+	_ch_title = _label(Style.SZ_XL, HORIZONTAL_ALIGNMENT_CENTER)
 	remove_child(_ch_title)
 	_choice_root.add_child(_ch_title)
-	_place(_ch_title, 0, 0, 0, 380, 1080, 150)
+	_place(_ch_title, 0, 0, 0, 320, 1080, 140)
 	_ch_title.anchor_right = 1.0
 	_ch_title.offset_right = 0
 	_ch_title.add_theme_color_override("font_color", Color(0.6, 1.0, 0.7))
-	_ch_pot = _label(84, HORIZONTAL_ALIGNMENT_CENTER)
+	_ch_pot = _label(Style.SZ_XL - 8, HORIZONTAL_ALIGNMENT_CENTER)
 	remove_child(_ch_pot)
 	_choice_root.add_child(_ch_pot)
-	_place(_ch_pot, 0, 0, 0, 580, 1080, 110)
+	_place(_ch_pot, 0, 0, 0, 640, 1080, 130)
 	_ch_pot.anchor_right = 1.0
 	_ch_pot.offset_right = 0
 	_ch_pot.add_theme_color_override("font_color", Color(1.0, 0.85, 0.3))
-	_ch_next = _label(46, HORIZONTAL_ALIGNMENT_CENTER)
+	_ch_next = _label(44, HORIZONTAL_ALIGNMENT_CENTER)
 	remove_child(_ch_next)
 	_choice_root.add_child(_ch_next)
-	_place(_ch_next, 0, 0, 0, 710, 1080, 64)
+	_place(_ch_next, 0, 0, 0, 808, 1080, 64)
+	_ch_next.add_theme_color_override("font_color", Style.ACCENT)
 	_ch_next.anchor_right = 1.0
 	_ch_next.offset_right = 0
-	_ch_hint = _label(46, HORIZONTAL_ALIGNMENT_CENTER)
+	_ch_hint = _label(34, HORIZONTAL_ALIGNMENT_CENTER)
 	remove_child(_ch_hint)
 	_choice_root.add_child(_ch_hint)
 	_ch_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_place(_ch_hint, 0.5, 0, -480, 790, 960, 140)
+	_place(_ch_hint, 0.5, 0, -460, 905, 920, 130)
 	_ch_hint.add_theme_color_override("font_color", Color(0.7, 0.88, 1.0))
 	_ch_cash = UiButton.new()
 	_ch_cash.text = "CASH OUT"
@@ -759,7 +814,7 @@ func _build_choice() -> void:
 	_ch_cash.icon = "cash"
 	_ch_cash.pressed.connect(func(): choice.emit("cashout"))
 	_choice_root.add_child(_ch_cash)
-	_place(_ch_cash, 0, 0, 40, 1010, 480, 230)
+	_place(_ch_cash, 0, 0, 40, 1110, 480, 230)
 	_ch_keep = UiButton.new()
 	_ch_keep.text = "KEEP FLYING"
 	_ch_keep.font_px = 56
@@ -767,11 +822,11 @@ func _build_choice() -> void:
 	_ch_keep.icon = "keep"
 	_ch_keep.pressed.connect(func(): choice.emit("keep"))
 	_choice_root.add_child(_ch_keep)
-	_place(_ch_keep, 0, 0, 560, 1010, 480, 230)
+	_place(_ch_keep, 0, 0, 560, 1110, 480, 230)
 	_ch_count = _label(180, HORIZONTAL_ALIGNMENT_CENTER)
 	remove_child(_ch_count)
 	_choice_root.add_child(_ch_count)
-	_place(_ch_count, 0, 0, 0, 1000, 1080, 240)
+	_place(_ch_count, 0, 0, 0, 630, 1080, 200)
 	_ch_count.anchor_right = 1.0
 	_ch_count.offset_right = 0
 	_ch_count.add_theme_color_override("font_color", Color(1.0, 0.88, 0.3))
@@ -793,6 +848,8 @@ func show_choice(info: Dictionary) -> void:
 	_ch_count.visible = false
 	_ch_next.visible = true
 	_ch_hint.visible = true
+	_ch_pot.visible = true
+	_ch_chip.visible = true
 	_sel_row.visible = false
 	_menu_row.visible = false
 	_bank_icon.visible = false
@@ -805,6 +862,8 @@ func show_cashout() -> void:
 	_ch_next.visible = false
 	_ch_hint.visible = false
 	_ch_title.text = "BANKED!"
+	_ch_pot.visible = false
+	_ch_chip.visible = false
 	_anim(_ch_title, A_POP, 0.0, 0.5)
 	_ch_count.visible = true
 	_ch_count.text = "+0"
@@ -1304,6 +1363,9 @@ func _build_fx() -> void:
 	move_child(slip_holder, _splash.get_index())
 	_slip_seal = _seal(slip_holder, "FAILED", Color(0.85, 0.15, 0.3), 320.0, 770.0, 440.0, 130.0)
 	_slip_seal.visible = false
+	_lost_seal = _seal(slip_holder, "POT LOST", Color(1.0, 0.36, 0.3), 190.0, 1060.0, 700.0, 150.0)
+	_lost_label = _lost_seal.get_child(0) as Label
+	_lost_seal.visible = false
 
 ## A rubber stamp: a bordered, slightly tilted word.
 func _seal(parent: Control, text: String, color: Color, x: float, y: float, w: float, h: float) -> Control:
@@ -1472,6 +1534,22 @@ func fly_coins_to_bank(n: int) -> void:
 		return
 	_burst.fly_coins(Vector2(540, 640), Vector2(95, 185), clampi(n / 8, 6, 24), 0.0)
 
+## "POT LOST  -840": the pot's coins spill out and a red stamp slams down (the crash popup says it in words too).
+func show_pot_lost(n: int) -> void:
+	_lost_label.text = "POT LOST  -%d" % n
+	_lost_seal.visible = true
+	if _instant:
+		return
+	_lost_seal.modulate.a = 0.0
+	_anim(_lost_seal, A_STAMP, 0.55, 0.55, Color(0, 0, 0, 0))
+	_burst.scatter_coins(_pot.global_position + Vector2(80, 24), clampi(n / 20, 6, 20))
+
+func _ch_card_ok() -> bool:
+	return _ch_chip != null and _ch_pot != null
+
+func hide_pot_lost() -> void:
+	_lost_seal.visible = false
+
 func confetti_burst() -> void:
 	if not _instant:
 		_burst.confetti(Vector2(540, 1150), 70)
@@ -1480,6 +1558,12 @@ func confetti_burst() -> void:
 
 func _update_rolls(delta: float) -> void:
 	var k := minf(delta * 7.0, 1.0)
+	if _choice_on and _ch_cash.visible:
+		var tt := float(Time.get_ticks_msec()) * 0.001
+		_ch_cash.pivot_offset = _ch_cash.size * 0.5
+		_ch_cash.scale = Vector2.ONE * (1.0 + 0.035 * sin(tt * 5.5))
+		_ch_icon.scale = Vector2.ONE * (1.0 + 0.06 * sin(tt * 3.0))
+		_ch_icon.rotation = 0.06 * sin(tt * 2.3)
 	if _pot.scale.x > 1.0:
 		_pot.scale = Vector2.ONE * maxf(_pot.scale.x - delta * 1.6, 1.0)
 	if _bank_icon.visible and _bank_icon.scale.x > 1.0:
@@ -1584,8 +1668,12 @@ func set_streak(n: int, pop: bool = false) -> void:
 		_streak_pop = 1.0
 	_streak_lost_t = 0.0
 	_streak_label.visible = n > 0
+	_streak_flame.visible = n > 0
 	if n > 0:
 		_streak_label.text = "STREAK x%d" % mini(n, Tuning.streak_cap)
+		if pop and not _instant and (n == 3 or n == 5 or n >= 7):
+			_burst.confetti(Vector2(180, 300), 10 + 4 * mini(n, 8))      # a little party at each step up
+			ui_sound.emit("fanfare")
 
 func streak_tier() -> int:
 	return clampi(_streak_n - 1, 0, 6)
@@ -1599,6 +1687,7 @@ func streak_lost(old: int) -> void:
 		_streak_lost_t = 1.4
 	else:
 		_streak_label.visible = false
+		_streak_flame.visible = false
 
 func glow_level() -> float:
 	return _glow_level
@@ -1617,9 +1706,11 @@ func _update_streak(dt: float) -> void:
 	if _streak_lost_t > 0.0:
 		_streak_lost_t -= dt
 		_streak_label.modulate = Color(0.7, 0.72, 0.78, clampf(_streak_lost_t * 2.0, 0.0, 1.0))
+		_streak_flame.modulate = Color(0.6, 0.62, 0.7, clampf(_streak_lost_t * 2.0, 0.0, 1.0))
 		_streak_label.scale = Vector2.ONE
 		if _streak_lost_t <= 0.0:
 			_streak_label.visible = false
+			_streak_flame.visible = false
 		return
 	if not _streak_label.visible:
 		return
@@ -1630,6 +1721,8 @@ func _update_streak(dt: float) -> void:
 	if tier >= 6:   # top of the ramp: the colour cycles
 		col = Color.from_hsv(fposmod(_t * 0.6, 1.0), 0.65, 1.0)
 	_streak_label.modulate = col
+	_streak_flame.modulate = col
+	_streak_flame.scale = Vector2.ONE * (0.8 + 0.12 * float(tier) + 0.08 * sin(_t * 9.0) + 0.3 * _streak_pop)
 	_streak_label.pivot_offset = Vector2(0.0, float(size) * 0.5)
 	var pulse2 := 1.0 + (0.03 + 0.012 * float(tier)) * sin(_t * (5.0 + 1.5 * float(tier))) + 0.35 * _streak_pop
 	_streak_label.scale = Vector2(pulse2, pulse2)
@@ -1691,11 +1784,11 @@ func set_flight(alt: float, vy: float, s: float, vref_kt: float, show: bool) -> 
 	var frac := clampf(s / 1.3, 0.0, 1.0)
 	_speed_bar.offset_right = _speed_bar.offset_left + 272.0 * frac
 	if s < stall_marker + 0.04:
-		_speed_bar.color = Color(1, 0.35, 0.3)
+		_speed_bar.color = Style.DANGER
 	elif s >= _band_lo and s <= _band_hi:
-		_speed_bar.color = Color(0.5, 0.95, 0.6)
+		_speed_bar.color = Style.SUCCESS
 	else:
-		_speed_bar.color = Color(1.0, 0.85, 0.35)
+		_speed_bar.color = Style.ACCENT
 	_speed_label.text = "%d KT   VREF %d" % [int(roundf(s * vref_kt)), int(roundf(vref_kt))]
 	_stall_mark.offset_left = -300.0 + 280.0 * clampf(stall_marker / 1.3, 0.0, 1.0)
 	_stall_mark.offset_right = _stall_mark.offset_left + 4.0
@@ -1718,6 +1811,20 @@ func popup(title: String, sub: String, color: Color, seconds: float) -> void:
 	_pop_color = color
 	_pop_t = 0.0
 	_pop_len = seconds
+	_pop_grade = Grading.NAMES.find(title)
+	var stars := [3, 2, 2, 1, 0]
+	for i in 3:
+		var on: bool = _pop_grade >= 0 and i < int(stars[_pop_grade])
+		_pop_stars[i].glyph = "star" if on else "star_off"
+		_pop_stars[i].visible = _pop_grade >= 0
+	var sb := Style.box(Color(Style.SURFACE_DARK, 0.93), color, Style.R_L, 6)
+	sb.shadow_color = Color(color, 0.45 if _pop_grade == 0 else 0.2)
+	sb.shadow_size = 40 if _pop_grade == 0 else 18
+	sb.shadow_offset = Vector2.ZERO
+	_pop_panel.add_theme_stylebox_override("panel", sb)
+	if _pop_grade == 0 and not _instant:
+		_burst.confetti(Vector2(540, 640), 40)
+		ui_sound.emit("fanfare")
 
 ## (tests) the grade popup's big text.
 func _popup_text_for_test() -> String:
@@ -1725,6 +1832,9 @@ func _popup_text_for_test() -> String:
 
 func clear_popup() -> void:
 	_pop_t = 99.0
+	_pop_panel.modulate.a = 0.0
+	for st in _pop_stars:
+		st.modulate.a = 0.0
 	_pop_title.modulate.a = 0.0
 	_pop_sub.modulate.a = 0.0
 
@@ -1975,15 +2085,27 @@ func update(delta: float) -> void:
 	if _pop_t < _pop_len + 0.1:
 		_pop_t += delta
 		var k := _pop_t / maxf(_pop_len, 0.01)
-		var pop := 1.0 + 0.45 * maxf(1.0 - _pop_t * 6.0, 0.0)
+		var grow := 0.55 + 0.45 * Style.ease_out_back(clampf(_pop_t / 0.34, 0.0, 1.0))
+		var pop := grow * (1.18 if _pop_grade == 0 else 1.0)
 		var a := clampf((1.0 - k) * 4.0, 0.0, 1.0)
 		_pop_title.pivot_offset = _pop_title.size * 0.5
 		_pop_title.scale = Vector2(pop, pop)
+		_pop_title.rotation = deg_to_rad(sin(_pop_t * 38.0) * 2.5 * maxf(1.0 - _pop_t * 3.0, 0.0)) if _pop_grade == 0 else 0.0
 		_pop_title.modulate = Color(_pop_color.r, _pop_color.g, _pop_color.b, a)
 		_pop_sub.modulate = Color(1, 1, 1, a)
+		_pop_panel.scale = Vector2.ONE * grow
+		_pop_panel.modulate.a = a
+		for i in 3:
+			var d := clampf((_pop_t - 0.12 - 0.1 * float(i)) / 0.3, 0.0, 1.0)
+			_pop_stars[i].scale = Vector2.ONE * (0.2 + 0.8 * Style.ease_out_back(d))
+			_pop_stars[i].rotation = (1.0 - d) * 0.8
+			_pop_stars[i].modulate.a = a * d
 	elif _pop_title.modulate.a > 0.0:
 		_pop_title.modulate.a = 0.0
 		_pop_sub.modulate.a = 0.0
+		_pop_panel.modulate.a = 0.0
+		for st in _pop_stars:
+			st.modulate.a = 0.0
 	if _gust.modulate.a > 0.0:
 		_gust.modulate.a = maxf(_gust.modulate.a - delta * 1.6, 0.0)
 	_fade.color.a = move_toward(_fade.color.a, _fade_target, delta / maxf(Tuning.fade_time, 0.01))
@@ -2048,6 +2170,10 @@ func begin_prewarm() -> void:
 		_pop_sub.text = "Sink 0.5   Aim +2   No bounce   +96"
 		_pop_title.modulate.a = 1.0
 		_pop_sub.modulate.a = 1.0
+		_pop_panel.modulate.a = 1.0
+		for st in _pop_stars:
+			st.modulate.a = 1.0
+			st.visible = true
 	_gust.modulate.a = 1.0
 	set_papi(2, 540.0, true, true)   # the big PAPI is drawn for real too
 	set_streak(7, true)               # ... and a high streak (label, glow)
@@ -2056,6 +2182,8 @@ func begin_prewarm() -> void:
 	_bank_icon.visible = true
 	_cr_sig.visible = true
 	_slip_seal.visible = true
+	_lost_seal.visible = true
+	_lost_label.text = "POT LOST  -0123456789"
 
 func prewarm_popups() -> void:
 	for g in Grading.NAMES:
@@ -2069,6 +2197,7 @@ func end_prewarm() -> void:
 	_glow.visible = false
 	_splash.visible = false
 	_burst.clear()
+	_lost_seal.visible = false
 	_bank_icon.visible = false
 	_cr_sig.visible = false
 	_slip_seal.visible = false

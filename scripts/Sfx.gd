@@ -3,7 +3,7 @@ extends Node
 ## Tiny synthesised sound effects (no audio files): tyre squeak, thud, crash, chime, gust whoosh.
 ## All streams are generated once at start-up; a small pool of players plays them.
 
-enum { SQUEAK, THUD, CRASH, CHIME, WHOOSH, TAP, COIN, STAMP, TROMBONE, SIGN }
+enum { SQUEAK, THUD, CRASH, CHIME, WHOOSH, TAP, COIN, STAMP, TROMBONE, SIGN, FANFARE, SKID, BOOM }
 const RATE := 22050
 const POOL := 4
 
@@ -50,6 +50,20 @@ func _ready() -> void:
 		return (sin(TAU * ph) * 0.45 + sin(TAU * 2.0 * ph) * 0.3 + sin(TAU * 3.0 * ph) * 0.15) * env * minf(t * 40.0, 1.0)))
 	_streams.append(_make(0.45, func(t: float, n: float) -> float:        # SIGN: a pen scratching
 		return n * 0.35 * (0.5 + 0.5 * sin(TAU * 11.0 * t)) * sin(PI * t / 0.45)))
+	_streams.append(_make(0.9, func(t: float, _n: float) -> float:        # FANFARE: a bright rising arpeggio
+		var notes := [523.25, 659.25, 783.99, 1046.5]
+		var v := 0.0
+		for k in 4:
+			var tt: float = t - float(k) * 0.09
+			if tt > 0.0:
+				var f: float = notes[k]
+				v += (sin(TAU * f * tt) * 0.4 + sin(TAU * f * 2.0 * tt) * 0.12) * exp(-tt * (5.0 if k < 3 else 3.2))
+		return v * 0.7))
+	_streams.append(_make(0.55, func(t: float, n: float) -> float:        # SKID: tyres biting and chirping
+		var f := 640.0 + 260.0 * sin(TAU * 7.0 * t)
+		return (n * 0.35 + sin(TAU * f * t) * 0.28) * exp(-t * 5.0) * minf(t * 60.0, 1.0)))
+	_streams.append(_make(1.1, func(t: float, n: float) -> float:        # BOOM: a low thud under the crash, for the lost pot
+		return (sin(TAU * (60.0 - 30.0 * t) * t) * 0.9 + n * 0.25 * exp(-t * 20.0)) * exp(-t * 3.5)))
 	for i in POOL:
 		var p := AudioStreamPlayer.new()
 		p.bus = &"Sfx"

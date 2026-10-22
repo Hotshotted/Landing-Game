@@ -2915,6 +2915,118 @@ func run_all() -> void:
 	main.state = MAIN.MENU
 	main._show_menu()
 
+	print("== 29. in-game polish: sky, aircraft, runway, popups, crash ==  [nodes %d]" % nodes())
+	var n29 := nodes()
+	var hud29 = main.hud
+	# the sky: a gradient per weather and time of day (never touching the game's random numbers)
+	main.airfield.night = false
+	var st0_29: int = main.rng.state
+	var tod_a_29: int = main.time_of_day()
+	check(main.rng.state == st0_29, "the time of day is cosmetic: it doesn't use the game's random numbers")
+	main.weather = SC.CLEAR
+	main._apply_environment()
+	var sky_clear_29: Color = main._sky_mat.get_shader_parameter("mid")
+	main.weather = SC.RAIN
+	main._apply_environment()
+	var sky_rain_29: Color = main._sky_mat.get_shader_parameter("mid")
+	main.weather = SC.CLEAR
+	main.airfield.night = true
+	main._apply_environment()
+	check(float(main._sky_mat.get_shader_parameter("stars")) == 1.0 and sky_rain_29 != sky_clear_29, "rain greys the sky and night brings the stars")
+	main.airfield.night = false
+	DF.parse(["tod=dusk"] as Array[String])
+	check(main.time_of_day() == 1, "?tod=dusk forces the golden hour")
+	main._apply_environment()
+	check(main._sky_mat.get_shader_parameter("mid") != sky_clear_29 and main.sun.light_color != Color.WHITE, "golden hour: a warm sky and a warm sun")
+	DF.parse([] as Array[String])
+	main._apply_environment()
+	# the aircraft: gear and flaps move, props blur, every kind has its own details
+	var ac29_29 = main.aircraft
+	ac29_29.reset(0.0, 8.0)
+	ac29_29.update_visual(0.0)
+	check(ac29_29._gear_ext == 0.0 and ac29_29._gear_root.scale.y < 0.2, "the gear starts up at the beginning of an approach")
+	for i in 40:
+		ac29_29.update_visual(0.05)
+	check(ac29_29._gear_root.scale.y > 0.95, "...and swings down (%.2f)" % ac29_29._gear_root.scale.y)
+	ac29_29.y = 40.0
+	ac29_29.gy = 0.0
+	for i in 30:
+		ac29_29.update_visual(0.05)
+	var flaps_up_29: float = ac29_29._flap_hinge.rotation.z
+	ac29_29.y = 2.0
+	for i in 30:
+		ac29_29.update_visual(0.05)
+	check(flaps_up_29 < 0.05 and ac29_29._flap_hinge.rotation.z > 0.4, "flaps stay up high and come down low (%.2f -> %.2f rad)" % [flaps_up_29, ac29_29._flap_hinge.rotation.z])
+	ac29_29.power = 1.0
+	ac29_29.update_visual(0.01)
+	var blur_on_29: bool = ac29_29._discs[0].visible
+	ac29_29.power = 0.0
+	ac29_29.update_visual(0.01)
+	check(blur_on_29 and not ac29_29._discs[0].visible, "the propeller blurs while the engine runs and stops with it")
+	ac29_29.power = 1.0
+	var kinds_ok_29 := true
+	for k in 5:
+		ac29_29.apply_plane(k)
+		for kk in 5:
+			for m in ac29_29._kind_parts[kk]:
+				kinds_ok_29 = kinds_ok_29 and (m.visible == (kk == k))
+	check(kinds_ok_29, "each aircraft shows only its own details")
+	check(ac29_29._scarf_tail != null, "Whiskers is at the controls, with a scarf to flutter")
+	ac29_29.apply_plane(main.plane_id)
+	# the runway: number sign, touchdown marks, edge stripes; lights glow at night
+	main.airfield.build()
+	check(main.airfield._sign_label.text.length() == 2 and main.airfield._edge_lines[0].visible, "the runway has its number on a sign and edge stripes (%s)" % main.airfield._sign_label.text)
+	check(main.airfield._halo_mats.size() == main.airfield._lights.size(), "every runway light has its glow")
+	# touchdown and crash effects
+	main.fx.tire(Vector3(10, 0.3, 1), 1.0)
+	check(main.fx._tire[(main.fx._next_tire + 2) % 3].emitting, "tyre smoke at touchdown")
+	main.start_run()
+	main._end_card()
+	main.pot = 420
+	main._coins_award = 0
+	hud29._instant = false
+	main._crash("Hit the trees!")
+	check(main.fx._deb[0].visible and main.fx._burn.emitting, "a crash throws debris and lights a smoke column")
+	check(hud29._lost_seal.visible and hud29._lost_label.text == "POT LOST  -420", "the lost pot is stamped on screen (%s)" % hud29._lost_label.text)
+	var y0: float = main.fx._deb[0].position.y
+	for i in 120:
+		main.fx._process(0.05)
+	check(main.fx._deb[0].position.y <= y0 and main.fx._deb[0].position.y >= -1.0, "the debris falls and lands")
+	hud29._instant = true
+	main._leave_crash()
+	check(not hud29._lost_seal.visible, "(and the stamp goes when the run is over)")
+	main.fx.clear()
+	check(not main.fx._deb[0].visible and not main.fx._burn.emitting, "effects clear")
+	# the grade popup: stars and a panel
+	hud29._instant = false
+	hud29.popup("Greaser!", "Sink 0.5", Color.GOLD, 1.7)
+	for i in 10:
+		hud29.update(0.05)
+	check(hud29._pop_panel.modulate.a > 0.5 and hud29._pop_stars[2].glyph == "star" and hud29._pop_stars[0].modulate.a > 0.5, "a Greaser gets the panel and three gold stars")
+	hud29.popup("Firm", "Sink 5", Color.ORANGE, 1.7)
+	check(hud29._pop_stars[0].glyph == "star" and hud29._pop_stars[1].glyph == "star_off", "a Firm landing gets one")
+	hud29.popup("CRASH", "x", Color.RED, 1.0)
+	check(not hud29._pop_stars[0].visible, "a crash shows no stars")
+	hud29._instant = true
+	hud29.clear_popup()
+	# the choice screen and its tension music
+	main.start_run()
+	main._end_card()
+	main.state = MAIN.MENU
+	main.landings = 2
+	main.pot = 300
+	main._enter_choice()
+	check(main.music.tension() >= 0.0 and main.music._tension_goal >= 0.5 and hud29._ch_icon != null and hud29._ch_card_ok(), "the choice screen is a card with the pot icon, and the heartbeat comes in (%.1f)" % main.music._tension_goal)
+	main._show_menu()
+	check(main.music._tension_goal == 0.0, "the menu is calm again")
+	var bar_29 := UiBar.new()
+	bar_29.color = Color.RED
+	check(bar_29.color == Color.RED, "(UiBar is a drop-in for ColorRect)")
+	bar_29.free()
+	main.landings = 0
+	main.pot = 0
+	check(nodes() == n29, "none of it allocates a node (%d)" % (nodes() - n29))
+
 	print("== 9. debug flags / frame time ==  [nodes %d]" % nodes())
 	DF.parse(["nofx=smoke,shake", "perf", "round=4", "seed=9", "bogus"] as Array[String])
 	check(DF.off("smoke") and DF.off("shake") and not DF.off("popup"), "?nofx=smoke,shake switches just those off")

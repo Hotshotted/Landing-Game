@@ -60,6 +60,16 @@ var _floats: Array[Node3D] = []
 var _nav: Array[MeshInstance3D] = []   # navigation lights (shown at night)
 
 var _gear_sets: Array = []        # pilot gear parts per gear index
+var _gear_root: Node3D            # wheels and struts: swung down at the start of the approach
+var _gear_ext := 1.0
+var _flap_hinge: Node3D
+var _flap_box: MeshInstance3D
+var _flap_ext := 0.0
+var _discs: Array[MeshInstance3D] = []   # the translucent propeller disc (blur)
+var _kind_parts: Array = [[], [], [], [], []]   # details shown only for one aircraft kind
+var _scarf_tail: MeshInstance3D
+var _t_anim := 0.0
+var _squat := 0.0                 # the gear compresses on touchdown (1 -> 0)
 var _scheme_on := false
 var _scheme_body := Color.WHITE
 var _scheme_accent := Color.WHITE
@@ -103,6 +113,8 @@ func reset(start_x: float, start_y: float) -> void:
 	_wobble_v = 0.0
 	_pending_drag = 0.0
 	_vis_pitch = Tuning.pitch_visual_offset
+	_gear_ext = 0.0
+	_flap_ext = 0.0
 	visible = true
 	update_visual(0.0)
 
@@ -144,12 +156,14 @@ func step_air(h: float, head: float, gust_v: float, gust_h: float) -> void:
 
 ## Wheels down: stop sinking and start rolling.
 func land() -> void:
+	_squat = 1.0
 	on_ground = true
 	vy = 0.0
 	y = gy
 
 ## Bounce: rebound upward with `v`; the plane is airborne again.
 func bounce(v: float) -> void:
+	_squat = 1.0
 	on_ground = false
 	vy = v
 	y = gy + 0.02
@@ -217,6 +231,12 @@ func apply_plane(id: int) -> void:
 			_p_nose.position = Vector3(3.6, 0.0, 0.0)
 			_p_fin.scale = Vector3(2.2, 2.4, 0.2)
 			_prop.visible = false
+	for k in _kind_parts.size():
+		for m in _kind_parts[k]:
+			(m as MeshInstance3D).visible = k == int(pr["kind"])
+	_flap_hinge.position = Vector3(0.3 - _p_wing.scale.x * 0.5, -0.25, 0.0)
+	_flap_box.scale = Vector3(0.7, 0.1, _p_wing.scale.z * 0.62)
+	_flap_box.position = Vector3(-0.35, 0.0, 0.0)
 	update_visual(0.0)
 
 ## Repaint: `body` is the fuselage colour, `accent` the nose / wings / tail (cosmetic paint schemes use this too).
@@ -288,6 +308,18 @@ func update_visual(dt: float) -> void:
 		_prop.rotation.x += 45.0 * dt
 		_prop2.rotation.x += 45.0 * dt
 		_prop3.rotation.x -= 45.0 * dt
+	for d in _discs:
+		d.visible = power > 0.0
+	_t_anim += dt
+	_gear_ext = move_toward(_gear_ext, 1.0, dt / 1.1)
+	_squat = move_toward(_squat, 0.0, dt * 2.4)
+	_gear_root.scale = Vector3(1.0, (0.12 + 0.88 * Style.ease_out_back(_gear_ext)) * (1.0 - 0.2 * _squat), 1.0)
+	var flap_goal := 1.0 if (on_ground or agl() < 30.0) else 0.0
+	_flap_ext = move_toward(_flap_ext, flap_goal, dt / 0.9)
+	_flap_hinge.rotation.z = deg_to_rad(30.0) * Style.ease_out_cubic(_flap_ext)
+	if _scarf_tail != null:
+		_scarf_tail.rotation.z = sin(_t_anim * 13.0) * 0.18
+		_scarf_tail.position.y = 1.05 + sin(_t_anim * 9.0) * 0.04
 
 # ---------- model ----------
 
@@ -358,25 +390,104 @@ func _build_model() -> void:
 			_prop2 = pr
 		else:
 			_prop3 = pr
+	_build_details()
+
+## Gear root, flaps, prop discs and the details that make each aircraft its own.
+func _build_details() -> void:
+	var dark := Color(0.16, 0.16, 0.18)
+	var glass := Color(0.45, 0.72, 0.92)
+	_gear_root = Node3D.new()
+	_pivot.add_child(_gear_root)
+	for g in _gear:
+		g.reparent(_gear_root, false)
+	_flap_hinge = Node3D.new()
+	_pivot.add_child(_flap_hinge)
+	_flap_box = MeshInstance3D.new()
+	_flap_box.mesh = BoxMesh.new()
+	var fm := _mat(Color(0.86, 0.2, 0.18))
+	_flap_box.material_override = fm
+	_accent_mats.append(fm)
+	_flap_box.material_overlay = _outline
+	_flap_box.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_flap_hinge.add_child(_flap_box)
+	# prop discs
+	var dm := StandardMaterial3D.new()
+	dm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	dm.albedo_color = Color(0.92, 0.94, 1.0, 0.24)
+	dm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	dm.cull_mode = BaseMaterial3D.CULL_DISABLED
+	for pr in [[_prop, 2.3], [_prop2, 1.9], [_prop3, 1.9]]:
+		var disc := MeshInstance3D.new()
+		var cm := CylinderMesh.new()
+		cm.top_radius = 0.5
+		cm.bottom_radius = 0.5
+		cm.height = 1.0
+		cm.radial_segments = 20
+		cm.rings = 1
+		disc.mesh = cm
+		disc.material_override = dm
+		disc.scale = Vector3(pr[1], 0.04, pr[1])
+		disc.rotation_degrees = Vector3(0, 0, 90)
+		disc.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		(pr[0] as Node3D).add_child(disc)
+		_discs.append(disc)
+	# details per kind: 0 Cub, 1 Cessna 172, 2 twin, 3 glider, 4 jet
+	var k0: Array = _kind_parts[0]
+	k0.append(_part(_wheel(), Vector3(1.55, 0.55, 1.55), Vector3(3.5, 0.0, 0.0), dark, Vector3(0, 0, 90)))       # round cowling
+	k0.append(_part(BoxMesh.new(), Vector3(0.9, 0.28, 0.08), Vector3(1.5, 0.45, 0.62), glass))                   # side window
+	k0.append(_part(BoxMesh.new(), Vector3(0.12, 0.7, 0.12), Vector3(-3.7, -0.7, 0.0), dark))                    # tail skid
+	k0.append(_part(BoxMesh.new(), Vector3(0.1, 0.55, 0.1), Vector3(2.0, 0.7, 0.0), dark, Vector3(0, 0, 25)))    # exhaust stack
+	var k1: Array = _kind_parts[1]
+	k1.append(_part(_cone(), Vector3(0.7, 0.9, 0.7), Vector3(4.05, 0.0, 0.0), dark, Vector3(0, 0, -90)))         # spinner
+	k1.append(_part(BoxMesh.new(), Vector3(1.9, 0.34, 0.08), Vector3(1.1, 0.5, 0.62), glass))                    # side windows
+	k1.append(_part(BoxMesh.new(), Vector3(4.2, 0.16, 1.25), Vector3(-0.3, -0.12, 0.0), Color(0.86, 0.2, 0.18)))  # colour stripe
+	var k2: Array = _kind_parts[2]
+	for side in [-1.0, 1.0]:
+		k2.append(_part(BoxMesh.new(), Vector3(1.9, 0.42, 0.42), Vector3(0.2, -0.22, side * 5.7), Color(0.2, 0.35, 0.75)))   # tip tanks
+	k2.append(_part(BoxMesh.new(), Vector3(2.2, 0.34, 0.08), Vector3(1.1, 0.5, 0.62), glass))
+	k2.append(_part(BoxMesh.new(), Vector3(4.4, 0.16, 1.25), Vector3(-0.3, -0.12, 0.0), Color(0.2, 0.35, 0.75)))
+	var k3: Array = _kind_parts[3]
+	k3.append(_part(BoxMesh.new(), Vector3(2.6, 0.62, 0.92), Vector3(1.1, 0.78, 0.0), glass))                   # long bubble canopy
+	for side in [-1.0, 1.0]:
+		k3.append(_part(BoxMesh.new(), Vector3(0.7, 0.75, 0.1), Vector3(0.1, 0.25, side * 9.0), Color(1.0, 0.55, 0.12)))  # winglets
+	k3.append(_part(BoxMesh.new(), Vector3(2.6, 0.12, 0.2), Vector3(0.3, -0.62, 0.0), dark))                    # belly skid
+	var k4: Array = _kind_parts[4]
+	for side in [-1.0, 1.0]:
+		k4.append(_part(BoxMesh.new(), Vector3(1.6, 0.62, 0.3), Vector3(1.5, -0.1, side * 0.72), dark))         # intakes
+		k4.append(_part(BoxMesh.new(), Vector3(1.4, 0.3, 0.3), Vector3(-0.2, -0.28, side * 3.2), Color(0.2, 0.22, 0.28)))   # wing tanks
+	k4.append(_part(_cone(), Vector3(0.9, 1.4, 0.9), Vector3(-3.6, 0.0, 0.0), dark, Vector3(0, 0, 90)))          # exhaust nozzle
+	k4.append(_part(BoxMesh.new(), Vector3(1.7, 0.5, 0.9), Vector3(1.1, 0.7, 0.0), Color(0.25, 0.3, 0.38)))       # dark canopy
+	for k in _kind_parts.size():
+		for m in _kind_parts[k]:
+			(m as MeshInstance3D).visible = k == 1
 
 ## Whiskers the cat at the controls, and the gear she can wear (all built once; set_pilot_gear just shows one).
 func _build_pilot() -> void:
 	var fur := Color(0.95, 0.6, 0.25)
-	_part(BoxMesh.new(), Vector3(0.62, 0.55, 0.62), Vector3(0.85, 1.27, 0.0), fur)           # head
-	_part(_cone(), Vector3(0.24, 0.36, 0.2), Vector3(0.78, 1.7, 0.2), fur)                # ears
-	_part(_cone(), Vector3(0.24, 0.36, 0.2), Vector3(0.78, 1.7, -0.2), fur)
-	_part(BoxMesh.new(), Vector3(0.1, 0.1, 0.1), Vector3(1.18, 1.22, 0.0), Color(0.9, 0.4, 0.45))   # nose
+	var dark := Color(0.1, 0.1, 0.12)
+	_part(BoxMesh.new(), Vector3(0.82, 0.7, 0.74), Vector3(0.85, 1.32, 0.0), fur)           # head (bigger: she is the star)
+	_part(_cone(), Vector3(0.3, 0.46, 0.24), Vector3(0.6, 1.88, 0.24), fur)               # ears
+	_part(_cone(), Vector3(0.3, 0.46, 0.24), Vector3(0.6, 1.88, -0.24), fur)
+	_part(_cone(), Vector3(0.14, 0.26, 0.1), Vector3(0.6, 1.86, 0.27), Color(0.98, 0.7, 0.72))   # inner ears
+	_part(BoxMesh.new(), Vector3(0.14, 0.12, 0.14), Vector3(1.27, 1.22, 0.0), Color(0.95, 0.45, 0.5))   # nose
+	_part(BoxMesh.new(), Vector3(0.2, 0.2, 0.06), Vector3(1.0, 1.38, 0.39), Color(1, 1, 1))     # eye (white)
+	_part(BoxMesh.new(), Vector3(0.1, 0.16, 0.07), Vector3(1.04, 1.38, 0.41), dark)             # pupil
+	for k in 3:                                                                               # whiskers, fanned, on the visible cheek
+		var ang := (float(k) - 1.0) * 14.0
+		_part(BoxMesh.new(), Vector3(0.62, 0.035, 0.03), Vector3(1.5, 1.2 + (float(k) - 1.0) * 0.07, 0.4), Color(1, 1, 1), Vector3(0, 0, ang))
+	_part(BoxMesh.new(), Vector3(0.36, 0.7, 0.2), Vector3(-0.35, 0.82, 0.0), fur, Vector3(0, 0, 10))   # body behind the head
 	var goggles: Array[MeshInstance3D] = []
-	goggles.append(_part(BoxMesh.new(), Vector3(0.14, 0.2, 0.7), Vector3(1.14, 1.36, 0.0), Color(0.12, 0.12, 0.14)))
-	goggles.append(_part(BoxMesh.new(), Vector3(0.66, 0.07, 0.66), Vector3(0.85, 1.4, 0.0), Color(0.3, 0.2, 0.12)))
+	goggles.append(_part(BoxMesh.new(), Vector3(0.16, 0.26, 0.8), Vector3(1.12, 1.4, 0.0), Color(0.12, 0.12, 0.14)))
+	goggles.append(_part(BoxMesh.new(), Vector3(0.84, 0.07, 0.8), Vector3(0.85, 1.5, 0.0), Color(0.3, 0.2, 0.12)))
 	var cap: Array[MeshInstance3D] = []
-	cap.append(_part(BoxMesh.new(), Vector3(0.7, 0.16, 0.7), Vector3(0.85, 1.6, 0.0), Color(0.2, 0.3, 0.6)))
-	cap.append(_part(BoxMesh.new(), Vector3(0.32, 0.05, 0.55), Vector3(1.25, 1.55, 0.0), Color(0.12, 0.2, 0.45)))
+	cap.append(_part(BoxMesh.new(), Vector3(0.9, 0.2, 0.8), Vector3(0.85, 1.7, 0.0), Color(0.2, 0.3, 0.6)))
+	cap.append(_part(BoxMesh.new(), Vector3(0.4, 0.06, 0.62), Vector3(1.3, 1.64, 0.0), Color(0.12, 0.2, 0.45)))
 	var scarf: Array[MeshInstance3D] = []
-	scarf.append(_part(BoxMesh.new(), Vector3(0.7, 0.2, 0.7), Vector3(0.85, 0.98, 0.0), Color(0.9, 0.25, 0.25)))
-	scarf.append(_part(BoxMesh.new(), Vector3(1.1, 0.1, 0.3), Vector3(0.1, 1.05, 0.0), Color(0.9, 0.25, 0.25)))
+	scarf.append(_part(BoxMesh.new(), Vector3(0.84, 0.24, 0.8), Vector3(0.85, 0.98, 0.0), Color(0.9, 0.25, 0.25)))
+	_scarf_tail = _part(BoxMesh.new(), Vector3(1.2, 0.12, 0.34), Vector3(0.1, 1.05, 0.0), Color(0.9, 0.25, 0.25))
+	scarf.append(_scarf_tail)
 	var crown: Array[MeshInstance3D] = []
-	crown.append(_part(_cone(), Vector3(0.5, 0.42, 0.5), Vector3(0.85, 1.78, 0.0), Color(1.0, 0.84, 0.2)))
+	crown.append(_part(_cone(), Vector3(0.64, 0.5, 0.64), Vector3(0.85, 1.95, 0.0), Color(1.0, 0.84, 0.2)))
 	_gear_sets = [[], goggles, cap, scarf, crown]
 	set_pilot_gear(0)
 

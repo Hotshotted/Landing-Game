@@ -14,6 +14,8 @@ extends RefCounted
 ##   ?weather=fog|rain|turbulence|shear|clear          force that weather every approach
 ##   ?plane=cub|172|twin|glider|jet                    start in that aircraft
 ##   ?debug                                            show the build stamp (also shown with ?tune and ?perf)
+##   ?tod=day|dusk                                     force the time of day (cosmetic)
+##   ?closeup                                          frame the aircraft close from the start (screenshots)
 ##   ?nologo                                           skip the studio logo intro
 ##   ?noads                                            no ad stubs (interstitials)
 ##   ?screen=certificate|slip|career|logbook|hangar|choice|pause     open that screen at start (to look at it)
@@ -36,6 +38,8 @@ static var weather_value := -1
 static var plane_value := -1
 static var noads := false
 static var nologo := false
+static var closeup := false
+static var tod_value := -1
 static var debug := false
 static var screen_value := ""
 
@@ -53,6 +57,14 @@ static func perf_enabled() -> bool:
 	return perf
 
 ## The build stamp (commit, time, active flags) shows only for ?debug, ?tune or ?perf.
+static func tod_forced() -> int:
+	_load()
+	return tod_value
+
+static func closeup_enabled() -> bool:
+	_load()
+	return closeup
+
 static func stamp_enabled() -> bool:
 	_load()
 	return debug or tune or perf
@@ -158,6 +170,8 @@ static func parse(args: Array[String]) -> void:
 	plane_value = -1
 	noads = false
 	nologo = false
+	closeup = false
+	tod_value = -1
 	debug = false
 	screen_value = ""
 	for a in args:
@@ -180,6 +194,10 @@ static func parse(args: Array[String]) -> void:
 				noads = true
 			"nologo":
 				nologo = true
+			"tod":
+				tod_value = 1 if val == "dusk" else 0
+			"closeup":
+				closeup = true
 			"debug":
 				debug = true
 			"screen":
