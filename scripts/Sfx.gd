@@ -3,7 +3,7 @@ extends Node
 ## Tiny synthesised sound effects (no audio files): tyre squeak, thud, crash, chime, gust whoosh.
 ## All streams are generated once at start-up; a small pool of players plays them.
 
-enum { SQUEAK, THUD, CRASH, CHIME, WHOOSH, TAP }
+enum { SQUEAK, THUD, CRASH, CHIME, WHOOSH, TAP, COIN, STAMP, TROMBONE, SIGN }
 const RATE := 22050
 const POOL := 4
 
@@ -29,6 +29,27 @@ func _ready() -> void:
 		return n * 0.4 * sin(PI * t / 0.6)))
 	_streams.append(_make(0.08, func(t: float, _n: float) -> float:
 		return sin(TAU * (520.0 - 1800.0 * t) * t) * exp(-t * 38.0) * 0.8))
+	_streams.append(_make(0.18, func(t: float, _n: float) -> float:       # COIN: a bright two-note ping
+		var f := 1318.0 if t < 0.06 else 1760.0
+		return (sin(TAU * f * t) * 0.5 + sin(TAU * f * 2.0 * t) * 0.15) * exp(-t * 16.0)))
+	_streams.append(_make(0.35, func(t: float, n: float) -> float:       # STAMP: a dull thump and a paper slap
+		return (sin(TAU * (90.0 - 120.0 * t) * t) * 0.9 + n * 0.5 * exp(-t * 60.0)) * exp(-t * 11.0)))
+	_streams.append(_make(1.5, func(t: float, _n: float) -> float:       # TROMBONE: a sad "wah wah wah wahhh"
+		var f := 233.0
+		if t < 0.35:
+			f = 233.0
+		elif t < 0.7:
+			f = 220.0
+		elif t < 1.05:
+			f = 208.0
+		else:
+			f = 196.0 - 22.0 * (t - 1.05)
+		var vib := 1.0 + 0.02 * sin(TAU * 6.0 * t) * float(t > 1.05)
+		var env := (0.55 + 0.45 * absf(sin(PI * t / 0.35))) if t < 1.05 else exp(-(t - 1.05) * 2.2)
+		var ph := f * vib * t
+		return (sin(TAU * ph) * 0.45 + sin(TAU * 2.0 * ph) * 0.3 + sin(TAU * 3.0 * ph) * 0.15) * env * minf(t * 40.0, 1.0)))
+	_streams.append(_make(0.45, func(t: float, n: float) -> float:        # SIGN: a pen scratching
+		return n * 0.35 * (0.5 + 0.5 * sin(TAU * 11.0 * t)) * sin(PI * t / 0.45)))
 	for i in POOL:
 		var p := AudioStreamPlayer.new()
 		p.bus = &"Sfx"

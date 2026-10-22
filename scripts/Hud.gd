@@ -135,6 +135,34 @@ var _ov_prompt: Label
 var _fade: ColorRect
 var _fade_target := 0.0
 var _splash: ColorRect
+signal ui_sound(kind: String)
+enum { A_SLIDE_R, A_SLIDE_L, A_POP, A_RISE, A_STAMP, A_FILL, A_SIGN, A_FLIP }
+const AN_MAX := 128
+var _instant := DisplayServer.get_name() == "headless"     # (the smoke tests see end states: no animation in the headless run)
+var _an_node: Array = []
+var _an_kind := PackedInt32Array()
+var _an_t := PackedFloat32Array()
+var _an_delay := PackedFloat32Array()
+var _an_dur := PackedFloat32Array()
+var _an_aux := PackedColorArray()
+var _an_hit := PackedByteArray()
+var _an_n := 0
+var _burst: UiBurst
+var _live: MenuScene
+var _shake := 0.0
+var _back_flag := false
+var _bank_icon: UiIcon
+var _cr_sig: Label
+var _cert_seal: Control
+var _slip_seal: Control
+var _log_seen := {}
+var _pot_shown := 0.0
+var _pot_tgt := 0.0
+var _pot_mult := 1.0
+var _score_shown := 0.0
+var _score_tgt := 0.0
+var _chpot_shown := 0.0
+var _chpot_tgt := 0.0
 var _logo_root: ColorRect
 var _logo_t := -1.0
 const LOGO_SECONDS := 1.8
@@ -383,8 +411,9 @@ func _ready() -> void:
 	move_child(_cert_root, _splash.get_index())
 	move_child(_ad_root, _splash.get_index())
 	move_child(_stamp, get_child_count() - 1)
+	_build_fx()
 	_build_logo()
-	set_process(false)
+	set_process(true)
 
 ## The buttons under the aircraft selector (menu and run-over screens). Built once; only shown / hidden / re-texted.
 func _build_menu_buttons() -> void:
@@ -581,11 +610,32 @@ func show_career(info: Dictionary) -> void:
 			pip.color = Color(0.4, 0.95, 0.5) if k < int(r["count"]) else Color(0.2, 0.24, 0.3, 0.9)
 	_cr_book.text = str(info["book_text"])
 	_cr_book.disabled = not bool(info["book"])
-	_career_root.visible = true
 	_menu_row.visible = false
 	_sel_row.visible = false
+	if _reveal(_career_root, A_SLIDE_R):
+		_career_fx(info)
+	elif not _instant and bool(info["endorsed"]):
+		_cr_sig.visible = true
+
+func _career_fx(info: Dictionary) -> void:
+	var rows: Array = info["rows"]
+	_cr_sig.visible = bool(info["endorsed"])
+	if _instant:
+		_cr_sig.visible_ratio = 1.0
+		return
+	for i in mini(rows.size(), MAX_TYPE_ROWS):
+		var r: Dictionary = rows[i]
+		var needed := mini(int(r["needed"]), MAX_PIPS)
+		for k in mini(int(r["count"]), needed):
+			var pip: ColorRect = _cr_rows[i]["pips"][k]
+			_anim(pip, A_FILL, 0.35 + float(i) * 0.12 + float(k) * 0.1, 0.4, Color(0.4, 0.95, 0.5))
+	if bool(info["endorsed"]):
+		_anim(_cr_sig, A_SIGN, 0.9, 1.1)
+		_anim(_cr_stamp, A_STAMP, 2.1, 0.55, Color(0, 0, 0, 0))
 
 func hide_career() -> void:
+	if _cr_on:
+		_back_flag = true
 	_cr_on = false
 	_career_root.visible = false
 
@@ -641,9 +691,12 @@ func show_certificate(rank_name: String, body: String, date_text: String) -> voi
 	_cert_body.text = body
 	_cert_date.text = date_text
 	_cert_sign.text = "Capt. Wiggins, CFI"
-	_cert_root.visible = true
 	_menu_row.visible = false
 	_sel_row.visible = false
+	if _reveal(_cert_root, A_RISE):
+		_anim(_cert_root, A_SLIDE_R, 0.0, 0.5)
+		_cert_seal.modulate.a = 0.0
+		_anim(_cert_seal, A_STAMP, 1.0, 0.55, Color(0, 0, 0, 0))
 
 func hide_certificate() -> void:
 	_cert_on = false
@@ -655,7 +708,11 @@ func certificate_visible() -> bool:
 ## The pot of the free-flight run (coins earned, not banked) and the multiplier the next landing pays.
 func set_pot(coins: int, mult: float, show: bool) -> void:
 	_pot.visible = show
-	_pot.text = "POT %d   x%.1f" % [coins, mult]
+	_pot_tgt = float(coins)
+	_pot_mult = mult
+	if _instant or coins < int(_pot_shown) or not show:
+		_pot_shown = float(coins)
+	_pot.text = "POT %d   x%.1f" % [int(roundf(_pot_shown)), mult]
 
 ## The choice after a landing: CASH OUT (bank the pot) or KEEP FLYING (a harder approach). Built once.
 func _build_choice() -> void:
@@ -724,7 +781,9 @@ func _build_choice() -> void:
 func show_choice(info: Dictionary) -> void:
 	_choice_on = true
 	_ch_title.text = str(info["title"])
-	_ch_pot.text = "POT  %d coins" % int(info["pot"])
+	_chpot_tgt = float(info["pot"])
+	_chpot_shown = _chpot_tgt if _instant else 0.0
+	_ch_pot.text = "POT  %d coins" % int(roundf(_chpot_shown))
 	_ch_next.text = "Next landing pays  x%.1f" % float(info["next_mult"])
 	_ch_hint.text = str(info["hint"])
 	_ch_cash.text = "CASH OUT"
@@ -736,7 +795,8 @@ func show_choice(info: Dictionary) -> void:
 	_ch_hint.visible = true
 	_sel_row.visible = false
 	_menu_row.visible = false
-	_choice_root.visible = true
+	_bank_icon.visible = false
+	_reveal(_choice_root, A_POP)
 
 ## CASH OUT was chosen: the buttons go, a big number counts up.
 func show_cashout() -> void:
@@ -745,6 +805,7 @@ func show_cashout() -> void:
 	_ch_next.visible = false
 	_ch_hint.visible = false
 	_ch_title.text = "BANKED!"
+	_anim(_ch_title, A_POP, 0.0, 0.5)
 	_ch_count.visible = true
 	_ch_count.text = "+0"
 
@@ -867,7 +928,7 @@ func show_pause() -> void:
 	_pause_btn.visible = false
 	_sel_row.visible = false
 	_menu_row.visible = false
-	_pause_root.visible = true
+	_reveal(_pause_root, A_POP)
 	show_pause_main()
 
 func show_pause_main() -> void:
@@ -972,9 +1033,9 @@ func show_hangar(data: Dictionary, planes_avail: Array = [], plane_now: int = -1
 		_hangar_planes[i].text = _hangar_label(pn, Planes.price(i), planes_avail.has(i), plane_now == i)
 		_hangar_planes[i].accent = plane_now == i
 		_hangar_planes[i].icon = Icons.aircraft(i)
-	_hangar_root.visible = true
 	_menu_row.visible = false
 	_sel_row.visible = false
+	_reveal(_hangar_root, A_SLIDE_R)
 
 func _hangar_label(item_name: String, cost: int, owned: bool, equipped: bool) -> String:
 	if equipped:
@@ -982,6 +1043,8 @@ func _hangar_label(item_name: String, cost: int, owned: bool, equipped: bool) ->
 	return item_name if owned else "%s  %dc" % [item_name, cost]
 
 func hide_hangar() -> void:
+	if _hangar_on:
+		_back_flag = true
 	_hangar_on = false
 	_hangar_root.visible = false
 	_ov_title.add_theme_font_size_override("font_size", 150)
@@ -1107,6 +1170,8 @@ func set_plane_choice(id: int) -> void:
 	var pr: Dictionary = Planes.profile(id)
 	_sel_name.text = pr["name"]
 	_sel_icon.glyph = Icons.aircraft(id)
+	if _live != null:
+		_live.plane_glyph = Icons.aircraft(id)
 	var bars := func(v: float, lo: float, hi: float) -> String:
 		var n := clampi(int(roundf((v - lo) / (hi - lo) * 4.0)) + 1, 1, 5)
 		return "#".repeat(n) + "-".repeat(5 - n)
@@ -1177,6 +1242,10 @@ func logo_running() -> bool:
 	return _logo_t >= 0.0
 
 func _process(delta: float) -> void:
+	_update_anims(delta)
+	_update_rolls(delta)
+	if _live != null:
+		_live.visible = _menu_row.visible and not _splash.visible
 	if _logo_t < 0.0:
 		return
 	_logo_t += delta
@@ -1189,8 +1258,241 @@ func _process(delta: float) -> void:
 	if _logo_t >= LOGO_SECONDS:
 		_logo_t = -1.0
 		_logo_root.visible = false
-		set_process(false)
 		logo_finished.emit()
+
+# ---------- motion: screen transitions, entrances, stamps ----------
+
+func _build_fx() -> void:
+	_an_node.resize(AN_MAX)
+	_an_kind.resize(AN_MAX)
+	_an_t.resize(AN_MAX)
+	_an_delay.resize(AN_MAX)
+	_an_dur.resize(AN_MAX)
+	_an_aux.resize(AN_MAX)
+	_an_hit.resize(AN_MAX)
+	_live = MenuScene.new()
+	add_child(_live)
+	move_child(_live, mini(_sel_row.get_index(), _menu_row.get_index()))
+	_burst = UiBurst.new()
+	add_child(_burst)
+	move_child(_burst, _splash.get_index())
+	_burst.coin_arrived.connect(_on_coin_arrived)
+	_bank_icon = UiIcon.new()
+	_bank_icon.glyph = "coin"
+	_choice_root.add_child(_bank_icon)
+	_place(_bank_icon, 0, 0, 40, 130, 110, 110)
+	_bank_icon.pivot_offset = Vector2(55, 55)
+	_bank_icon.visible = false
+	_cr_sig = _label(Style.SZ_M, HORIZONTAL_ALIGNMENT_LEFT)
+	remove_child(_cr_sig)
+	_cr_speech_panel.add_child(_cr_sig)
+	_cr_sig.text = "Capt. Wiggins"
+	_cr_sig.rotation = -0.06
+	_cr_sig.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
+	_cr_sig.offset_left = 24
+	_cr_sig.offset_top = -66
+	_cr_sig.offset_right = 360
+	_cr_sig.offset_bottom = -6
+	_cr_sig.add_theme_color_override("font_color", Color(0.12, 0.2, 0.55))
+	_cr_sig.add_theme_color_override("font_outline_color", Color(1, 1, 1, 0.0))
+	_cr_sig.visible = false
+	_cert_seal = _seal(_cert_root, "APPROVED", Color(0.75, 0.15, 0.12), 560.0, 1000.0, 400.0, 120.0)
+	var slip_holder := Control.new()
+	slip_holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	slip_holder.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	add_child(slip_holder)
+	move_child(slip_holder, _splash.get_index())
+	_slip_seal = _seal(slip_holder, "FAILED", Color(0.85, 0.15, 0.3), 320.0, 770.0, 440.0, 130.0)
+	_slip_seal.visible = false
+
+## A rubber stamp: a bordered, slightly tilted word.
+func _seal(parent: Control, text: String, color: Color, x: float, y: float, w: float, h: float) -> Control:
+	var pn := Panel.new()
+	pn.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var st := StyleBoxFlat.new()
+	st.bg_color = Color(color, 0.0)
+	st.set_border_width_all(10)
+	st.border_color = color
+	st.set_corner_radius_all(18)
+	pn.add_theme_stylebox_override("panel", st)
+	parent.add_child(pn)
+	_place(pn, 0, 0, x, y, w, h)
+	pn.pivot_offset = Vector2(w, h) * 0.5
+	pn.rotation = -0.2
+	var lb := _label(Style.SZ_M + 8, HORIZONTAL_ALIGNMENT_CENTER)
+	remove_child(lb)
+	pn.add_child(lb)
+	lb.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	lb.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	lb.text = text
+	lb.add_theme_color_override("font_color", color)
+	lb.add_theme_color_override("font_outline_color", Color(1, 1, 1, 0.0))
+	return pn
+
+func _anim(node: Control, kind: int, delay: float = 0.0, dur: float = -1.0, aux: Color = Color.WHITE) -> void:
+	if _instant or node == null:
+		return
+	var i := _an_node.find(node)
+	if i < 0 or i >= _an_n:
+		if _an_n >= AN_MAX:
+			return
+		i = _an_n
+		_an_n += 1
+		_an_node[i] = node
+	_an_kind[i] = kind
+	_an_t[i] = -delay
+	_an_dur[i] = dur if dur > 0.0 else (0.55 if kind == A_STAMP else (1.0 if kind == A_SIGN else Style.T_BASE + 0.1))
+	_an_aux[i] = aux
+	_an_hit[i] = 0
+	node.pivot_offset = node.size * 0.5
+	if kind == A_FLIP:
+		node.pivot_offset = Vector2(0.0, node.size.y * 0.5)
+	_apply_anim(i, 0.0)
+
+func _apply_anim(i: int, k: float) -> void:
+	var n: Control = _an_node[i]
+	var e := Style.ease_out_cubic(k)
+	match _an_kind[i]:
+		A_SLIDE_R, A_SLIDE_L:
+			n.position.x = (1.0 - e) * (160.0 if _an_kind[i] == A_SLIDE_R else -160.0)
+			n.modulate.a = e
+		A_POP:
+			n.scale = Vector2.ONE * (0.82 + 0.18 * Style.ease_out_back(k))
+			n.modulate.a = clampf(k * 4.0, 0.0, 1.0)
+		A_RISE:
+			n.scale = Vector2.ONE * (0.88 + 0.12 * Style.ease_out_back(k))
+			n.modulate.a = clampf(k * 3.0, 0.0, 1.0)
+		A_STAMP:
+			var base: float = _an_aux[i].r
+			var fall := clampf(k / 0.6, 0.0, 1.0)
+			var sc := lerpf(3.2, 1.0, Style.ease_in_cubic(fall))
+			if k > 0.6:
+				sc = 1.0 + 0.08 * sin((k - 0.6) / 0.4 * PI)
+			n.scale = Vector2.ONE * sc
+			n.rotation = base + 0.25 * (1.0 - fall)
+			n.modulate.a = clampf(k * 6.0, 0.0, 1.0)
+			if k >= 0.6 and _an_hit[i] == 0:
+				_an_hit[i] = 1
+				_shake = 0.35
+				ui_sound.emit("stamp")
+				if n == _cert_seal:
+					confetti_burst()
+				elif n == _slip_seal:
+					ui_sound.emit("trombone")
+		A_FILL:
+			var col: Color = _an_aux[i]
+			(n as ColorRect).color = Color(0.2, 0.24, 0.3, 0.9).lerp(col, e)
+			n.scale = Vector2.ONE * (1.0 + 0.45 * sin(k * PI))
+		A_SIGN:
+			(n as Label).visible_ratio = k
+		A_FLIP:
+			n.scale.x = maxf(e, 0.02)
+			n.modulate.a = clampf(k * 3.0, 0.0, 1.0)
+
+func _finish_anim(i: int) -> void:
+	var n: Control = _an_node[i]
+	n.position.x = 0.0 if (_an_kind[i] == A_SLIDE_R or _an_kind[i] == A_SLIDE_L) else n.position.x
+	n.modulate.a = 1.0
+	n.scale = Vector2.ONE
+	match _an_kind[i]:
+		A_STAMP:
+			n.rotation = _an_aux[i].r
+		A_FILL:
+			(n as ColorRect).color = _an_aux[i]
+		A_SIGN:
+			(n as Label).visible_ratio = 1.0
+
+func _update_anims(delta: float) -> void:
+	if _shake > 0.0:
+		_shake = maxf(_shake - delta, 0.0)
+		var o := Vector2(sin(float(Time.get_ticks_msec()) * 0.09), cos(float(Time.get_ticks_msec()) * 0.077)) * _shake * 24.0
+		offset = o if _shake > 0.0 else Vector2.ZERO
+	var i := 0
+	while i < _an_n:
+		_an_t[i] += delta
+		if _an_t[i] < 0.0:
+			i += 1
+			continue
+		var k := clampf(_an_t[i] / _an_dur[i], 0.0, 1.0)
+		_apply_anim(i, k)
+		if k >= 1.0:
+			_finish_anim(i)
+			_an_n -= 1
+			_an_node[i] = _an_node[_an_n]
+			_an_kind[i] = _an_kind[_an_n]
+			_an_t[i] = _an_t[_an_n]
+			_an_delay[i] = _an_delay[_an_n]
+			_an_dur[i] = _an_dur[_an_n]
+			_an_aux[i] = _an_aux[_an_n]
+			_an_hit[i] = _an_hit[_an_n]
+			_an_node[_an_n] = null
+		else:
+			i += 1
+
+## Show a screen root with its transition (slide from the side, or pop) and its children entering one after another.
+## Returns false (and does nothing more) when it was already showing, so refreshing a screen doesn't replay it.
+func _reveal(root: Control, kind: int) -> bool:
+	var was := root.visible
+	root.visible = true
+	if was:
+		return false
+	if _instant:
+		return true
+	_anim(root, kind)
+	var d := 0
+	for c in root.get_children():
+		if not (c is Control) or not (c as Control).visible:
+			continue
+		var delay := minf(float(d) * Style.STAGGER * 0.6, 0.5) + 0.06
+		if c is UiButton:
+			(c as UiButton).pop_in(delay)
+		else:
+			_anim(c as Control, A_RISE, delay)
+		d += 1
+	return true
+
+func _on_coin_arrived() -> void:
+	ui_sound.emit("coin")
+	if _bank_icon.visible:
+		_bank_icon.scale = Vector2.ONE * 1.3
+	_pot.scale = Vector2.ONE * 1.25
+
+## Coins fly from `from` into the pot readout.
+func fly_coins_to_pot(from: Vector2, n: int) -> void:
+	if _instant:
+		return
+	_pot.pivot_offset = Vector2(60, 24)
+	_burst.fly_coins(from, _pot.global_position + Vector2(80, 24), clampi(n, 3, 10), 0.15)
+
+## Coins fly from the big pot number into the bank (the coin at the top-left).
+func fly_coins_to_bank(n: int) -> void:
+	_bank_icon.visible = true
+	_bank_icon.scale = Vector2.ONE
+	if _instant:
+		return
+	_burst.fly_coins(Vector2(540, 640), Vector2(95, 185), clampi(n / 8, 6, 24), 0.0)
+
+func confetti_burst() -> void:
+	if not _instant:
+		_burst.confetti(Vector2(540, 1150), 70)
+
+# ---------- rolling numbers ----------
+
+func _update_rolls(delta: float) -> void:
+	var k := minf(delta * 7.0, 1.0)
+	if _pot.scale.x > 1.0:
+		_pot.scale = Vector2.ONE * maxf(_pot.scale.x - delta * 1.6, 1.0)
+	if _bank_icon.visible and _bank_icon.scale.x > 1.0:
+		_bank_icon.scale = Vector2.ONE * maxf(_bank_icon.scale.x - delta * 2.0, 1.0)
+	if absf(_pot_shown - _pot_tgt) > 0.4:
+		_pot_shown += (_pot_tgt - _pot_shown) * k + signf(_pot_tgt - _pot_shown) * 0.3
+		_pot.text = "POT %d   x%.1f" % [int(roundf(_pot_shown)), _pot_mult]
+	if absf(_score_shown - _score_tgt) > 0.4:
+		_score_shown += (_score_tgt - _score_shown) * k + signf(_score_tgt - _score_shown) * 0.3
+		_score.text = str(int(roundf(_score_shown)))
+	if absf(_chpot_shown - _chpot_tgt) > 0.4:
+		_chpot_shown += (_chpot_tgt - _chpot_shown) * k + signf(_chpot_tgt - _chpot_shown) * 0.3
+		_ch_pot.text = "POT  %d coins" % int(roundf(_chpot_shown))
 
 ## Move everything that hugs the top or bottom edge inside the safe area (notch, home bar). Idempotent: works from the designed offsets.
 func apply_safe() -> void:
@@ -1242,7 +1544,10 @@ func _place(c: Control, ax: float, ay: float, x: float, y: float, w: float, h: f
 # ---------- game readouts ----------
 
 func set_score(v: int) -> void:
-	_score.text = str(v)
+	_score_tgt = float(v)
+	if _instant or v < int(_score_shown) or v == 0:
+		_score_shown = float(v)
+		_score.text = str(v)
 
 func set_round(n: int) -> void:
 	_round.text = "ROUND %d" % n
@@ -1433,6 +1738,10 @@ func show_menu(best: int, career_text: String = "") -> void:
 	_ov_title.add_theme_color_override("font_color", Color(1.0, 0.85, 0.2))
 	_ov_body.text = career_text + "Drag up / down to pitch the nose. Flare just before touchdown.\nTouch down on the aim markers. Three crashes end the run. No go-arounds." + (("\n\nBest: %d" % best) if best > 0 else "")
 	_ov_prompt.text = "TAP TO FLY"
+	if _back_flag and not _instant:
+		_anim(_sel_row, A_SLIDE_L)
+		_anim(_menu_row, A_SLIDE_L, 0.05)
+	_back_flag = false
 
 ## A result screen (checkride passed / failed, rank-up): title, body and prompt.
 func show_notice(title: String, body: String, prompt: String, color: Color) -> void:
@@ -1444,6 +1753,15 @@ func show_notice(title: String, body: String, prompt: String, color: Color) -> v
 	_ov_title.add_theme_color_override("font_color", color)
 	_ov_body.text = body
 	_ov_prompt.text = prompt
+	var slip := title == "PINK SLIP"
+	if slip and not _slip_seal.visible:
+		_slip_seal.visible = true
+		_slip_seal.modulate.a = 0.0
+		_anim(_slip_seal, A_STAMP, 0.7, 0.55, Color(0, 0, 0, 0))
+		if _instant:
+			_slip_seal.modulate.a = 1.0
+	elif not slip:
+		_slip_seal.visible = false
 
 ## The logbook screen. `stamped` maps airport id -> {"name", "day", "n"}.
 func show_logbook(body: String, stamped: Dictionary, slips: Array = []) -> void:
@@ -1477,11 +1795,25 @@ func show_logbook(body: String, stamped: Dictionary, slips: Array = []) -> void:
 			var sl: Dictionary = slips[slips.size() - 1 - i]       # newest first
 			_log_slip_labels[i].text = "PINK SLIP   %s   %s checkride   %s" % [sl["date"], sl["rank"], sl["type"]]
 	_log_more.text = ("+%d earlier pink slips" % (slips.size() - shown)) if slips.size() > shown else ""
-	_log_root.visible = true
 	_menu_row.visible = false
 	_sel_row.visible = false
+	var fresh := _reveal(_log_root, A_FLIP)
+	var d := 0
+	for i in list.size():
+		var id: String = list[i]["id"]
+		if stamped.has(id) and not _log_seen.has(id):
+			_log_seen[id] = true
+			if fresh and not _instant:
+				_anim(_log_stamps[i], A_STAMP, 0.7 + float(d) * 0.45, 0.5, Color(0, 0, 0, 0))
+				d += 1
+		elif stamped.has(id):
+			_log_seen[id] = true
+	if fresh and not _instant and shown > 0:
+		_anim(_log_slips[0], A_STAMP, 0.7 + float(d) * 0.45, 0.5, Color(0, 0, 0, 0.0))
 
 func hide_logbook() -> void:
+	if _log_on:
+		_back_flag = true
 	_log_on = false
 	_log_root.visible = false
 	_ov_title.add_theme_font_size_override("font_size", 150)
@@ -1513,12 +1845,20 @@ func hide_overlay() -> void:
 	_set_overlay(false)
 
 func _set_overlay(on: bool) -> void:
+	if on and not overlay_visible and not _instant:
+		_overlay.modulate.a = 0.0
+		_anim(_overlay, A_RISE, 0.0, 0.3)
+		_anim(_ov_title, A_POP, 0.05, 0.45)
+		_anim(_ov_body, A_RISE, 0.15, 0.4)
+		_anim(_ov_prompt, A_RISE, 0.3, 0.4)
 	overlay_visible = on
 	if not on:
 		hide_logbook()
 		hide_hangar()
 		hide_career()
 		hide_certificate()
+	if not on:
+		_slip_seal.visible = false
 	_sel_row.visible = on and not _splash.visible
 	_menu_row.visible = on and not _splash.visible and not _log_on and not _hangar_on and not _cr_on and not _cert_on
 	_overlay.visible = on
@@ -1711,6 +2051,11 @@ func begin_prewarm() -> void:
 	_gust.modulate.a = 1.0
 	set_papi(2, 540.0, true, true)   # the big PAPI is drawn for real too
 	set_streak(7, true)               # ... and a high streak (label, glow)
+	_burst.show_all()
+	_live.visible = true
+	_bank_icon.visible = true
+	_cr_sig.visible = true
+	_slip_seal.visible = true
 
 func prewarm_popups() -> void:
 	for g in Grading.NAMES:
@@ -1723,6 +2068,10 @@ func end_prewarm() -> void:
 	_glow_level = 0.0
 	_glow.visible = false
 	_splash.visible = false
+	_burst.clear()
+	_bank_icon.visible = false
+	_cr_sig.visible = false
+	_slip_seal.visible = false
 	hide_logbook()
 	hide_hangar()
 	hide_career()

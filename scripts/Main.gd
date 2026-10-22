@@ -152,6 +152,7 @@ func _ready() -> void:
 			Input.vibrate_handheld(8)
 	Style.detect_safe(get_viewport().get_visible_rect().size)
 	hud.apply_safe()
+	hud.ui_sound.connect(_on_ui_sound)
 	hud.plane_step.connect(_on_plane_step)
 	hud.menu_action.connect(_on_menu_action)
 	hud.choice.connect(_on_choice)
@@ -842,6 +843,8 @@ func _touchdown() -> void:
 		if rough:
 			sub = "ROUGH WATER   " + sub
 		hud.popup(Grading.NAMES[g], sub, Grading.COLORS[g], Tuning.popup_time)
+		if mode == FREE and _coins_award > 0:
+			hud.fly_coins_to_pot(camera.unproject_position(Vector3(px, gy + 3.0, 0.0)), _coins_award / 6)
 		if g0 >= 3:
 			hud.streak_lost(had_streak)
 		else:
@@ -1090,6 +1093,17 @@ func _update_fog() -> void:
 			return
 		vis = lerpf(airfield.vis_end, 700.0, _instr_open * _instr_open)      # the runway appears at minimums
 	fog.set_fog(true, _plane_screen_x(), vs.x / maxf(_cam_w, 1.0), vs.x, minf(Tuning.fog_start, vis * 0.4), vis, col, strength, haze)
+
+func _on_ui_sound(kind: String) -> void:
+	match kind:
+		"stamp":
+			sfx.play(Sfx.STAMP, 1.0, -2.0)
+		"trombone":
+			sfx.play(Sfx.TROMBONE, 1.0, -4.0)
+		"coin":
+			sfx.play(Sfx.COIN, 1.0 + rng.randf_range(-0.08, 0.2), -10.0)
+		"sign":
+			sfx.play(Sfx.SIGN, 1.0, -8.0)
 
 func _on_tuning_changed(property: String) -> void:
 	if property == "outline_thickness":
@@ -1686,6 +1700,7 @@ func _start_cashout() -> void:
 	_cash_t = 0.0
 	_cash_shown = 0
 	hud.show_cashout()
+	hud.fly_coins_to_bank(pot)
 
 ## The count-up: the number eases up to the pot with a tick for every few coins, gold sparkles at the end, then the run is over.
 func _step_cashout(dt: float) -> void:

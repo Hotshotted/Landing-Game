@@ -2837,6 +2837,84 @@ func run_all() -> void:
 	check(DF.nologo, "?nologo skips the studio intro")
 	DF.parse([] as Array[String])
 
+	print("== 28. motion: transitions, stamps, coins, confetti, the living menu ==  [nodes %d]" % nodes())
+	var hud28 = main.hud
+	var n28 := nodes()
+	var sounds28: Array[String] = []
+	var snd28 := func(k: String): sounds28.append(k)
+	hud28.ui_sound.connect(snd28)
+	hud28._instant = false
+	main.start_run()
+	main._end_card()
+	main.state = MAIN.MENU
+	main._show_menu()
+	hud28.hide_career()
+	hud28.show_career(main.career_info())
+	check(hud28._an_n > 0 and absf(hud28._career_root.position.x) > 1.0 and hud28._career_root.modulate.a < 1.0, "a screen starts its transition when it opens (%d animations, offset %.0f px)" % [hud28._an_n, hud28._career_root.position.x])
+	var anims_mid: int = hud28._an_n
+	for i in 120:
+		hud28._update_anims(0.05)
+	check(hud28._an_n == 0 and hud28._career_root.position.x == 0.0 and hud28._career_root.modulate.a == 1.0 and hud28._career_root.scale == Vector2.ONE, "...and ends exactly in place (nothing left animating)")
+	hud28.show_career(main.career_info())
+	check(hud28._an_n == 0, "refreshing an open screen doesn't replay its entrance")
+	hud28.hide_career()
+	hud28.show_menu(0)
+	check(hud28._back_flag == false and hud28._an_n > 0, "coming back to the menu slides it in from the other side")
+	for i in 40:
+		hud28._update_anims(0.05)
+	# stamps and sounds
+	hud28.hide_certificate()
+	sounds28.clear()
+	hud28.show_certificate("PRIVATE", "Well done", "1/1/26")
+	for i in 80:
+		hud28._update_anims(0.05)
+		hud28._burst._process(0.05)
+	check(sounds28.has("stamp") and hud28._cert_seal.modulate.a == 1.0 and hud28._cert_seal.scale == Vector2.ONE, "the certificate stamp slams (a sound) and settles")
+	check(hud28._burst.active_count() >= 0, "(confetti plays out)")
+	hud28.confetti_burst()
+	var conf: int = hud28._burst.active_count()
+	for i in 80:
+		hud28._burst._process(0.05)
+	check(conf >= 40 and hud28._burst.active_count() == 0, "confetti: %d pieces, all gone after a few seconds" % conf)
+	sounds28.clear()
+	hud28.fly_coins_to_pot(Vector2(300, 900), 6)
+	for i in 60:
+		hud28._burst._process(0.05)
+	check(sounds28.count("coin") == 6 and hud28._burst.active_count() == 0, "coins fly into the pot (6 arrive, a sound each)")
+	sounds28.clear()
+	hud28.hide_certificate()
+	hud28.show_notice("PINK SLIP", "failed", "TAP", Color.RED)
+	for i in 60:
+		hud28._update_anims(0.05)
+	check(hud28._slip_seal.visible and sounds28.has("stamp") and sounds28.has("trombone"), "a pink slip is stamped, with the sad trombone")
+	hud28.show_notice("STANDARD MET", "ok", "TAP", Color.GREEN)
+	check(not hud28._slip_seal.visible, "(and the stamp is gone on other notices)")
+	hud28.set_score(0)
+	hud28.set_score(500)
+	hud28._update_rolls(0.05)
+	var rolling_mid: bool = int(hud28._score.text) < 500
+	for i in 100:
+		hud28._update_rolls(0.05)
+	check(rolling_mid and hud28._score.text == "500", "numbers roll up to their value (and land exactly on it)")
+	hud28.set_score(0)
+	var ok28 := true
+	for tt in range(0, int(MenuScene.LOOP * 20.0)):
+		var pz: Dictionary = MenuScene.pose(float(tt) / 20.0)
+		ok28 = ok28 and pz["x"] > 0.0 and pz["x"] < 1080.0 and pz["y"] <= MenuScene.RW_Y + 0.5 and pz["y"] >= MenuScene.ALT_Y - 60.0
+	var p0: Dictionary = MenuScene.pose(0.0)
+	var p1: Dictionary = MenuScene.pose(MenuScene.LOOP - 0.001)
+	check(ok28 and absf(float(p0["x"]) - float(p1["x"])) < 10.0 and p0["y"] == p1["y"], "the living menu's plane stays on screen, never below the runway, and its loop closes")
+	var land: Dictionary = MenuScene.pose(16.0)
+	check(is_equal_approx(float(land["y"]), MenuScene.RW_Y), "...and it touches down on the runway")
+	check(hud28._live != null and hud28._live.plane_glyph == Icons.aircraft(main.plane_id), "the aircraft in the living menu is the one you picked")
+	check(nodes() == n28, "none of it allocates a node (%d)" % (nodes() - n28))
+	hud28._instant = true
+	hud28.ui_sound.disconnect(snd28)
+	hud28.hide_career()
+	hud28.hide_certificate()
+	main.state = MAIN.MENU
+	main._show_menu()
+
 	print("== 9. debug flags / frame time ==  [nodes %d]" % nodes())
 	DF.parse(["nofx=smoke,shake", "perf", "round=4", "seed=9", "bogus"] as Array[String])
 	check(DF.off("smoke") and DF.off("shake") and not DF.off("popup"), "?nofx=smoke,shake switches just those off")
