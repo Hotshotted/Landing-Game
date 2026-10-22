@@ -146,8 +146,16 @@ func _ready() -> void:
 	add_child(fog)
 	hud = Hud.new()
 	add_child(hud)
-	UiButton.on_down = func():
-		sfx.play(Sfx.TAP, 1.0, -8.0)
+	UiButton.on_down = func(kind: String):
+		match kind:
+			"ghost":
+				sfx.play(Sfx.BACK, 1.0, -7.0)
+			"primary", "gold":
+				sfx.play(Sfx.CONFIRM, 1.0, -9.0)
+			"danger":
+				sfx.play(Sfx.DENY, 1.0, -10.0)
+			_:
+				sfx.play(Sfx.TAP, 1.0, -8.0)
 		if DisplayServer.get_name() != "headless":
 			Input.vibrate_handheld(8)
 	Style.detect_safe(get_viewport().get_visible_rect().size)
@@ -284,7 +292,7 @@ func _open_debug_screen() -> void:
 
 func _show_menu() -> void:
 	state = MENU
-	music.set_tension(0.0)
+	_set_base_tension(0.0)
 	hud.hide_card()
 	mode = FREE
 	hud.set_pot(0, 1.0, false)
@@ -675,6 +683,7 @@ func _process(raw_delta: float) -> void:
 	if DebugFlags.perf_enabled():
 		hud.set_clock(sim_time, maxf((Time.get_ticks_msec() - _run_start_ms - _paused_total_ms) / 1000.0, 0.0))
 	advance(dt)
+	_update_audio(dt)
 
 ## One frame of the whole game (tests call this directly with a fixed dt).
 func advance(dt: float) -> void:
@@ -980,7 +989,7 @@ func _crash(reason: String) -> void:
 		_coins_award = 0
 	_awarded = 0
 	hud.set_strikes(0, 0) if mode == FREE else hud.set_strikes(strikes, strikes_max())
-	music.set_tension(0.0)
+	_set_base_tension(0.0)
 	hud.popup("CRASH", reason + lost_text, Color(1.0, 0.35, 0.3), Tuning.crash_pause)
 	hud.set_hint("")
 	fx.crash(Vector3(aircraft.x, maxf(aircraft.y, aircraft.gy) + 1.5, 0.5))
@@ -1181,6 +1190,36 @@ func _update_fog() -> void:
 		vis = lerpf(airfield.vis_end, 700.0, _instr_open * _instr_open)      # the runway appears at minimums
 	fog.set_fog(true, _plane_screen_x(), vs.x / maxf(_cam_w, 1.0), vs.x, minf(Tuning.fog_start, vis * 0.4), vis, col, strength, haze)
 
+var _tension_base := 0.0         # from the push-your-luck pot
+var _final_tension := 0.0        # builds on the final approach
+
+func _set_base_tension(v: float) -> void:
+	_tension_base = v
+	music.set_tension(maxf(_tension_base, _final_tension))
+
+## Every frame: the engine, wind and rain loops follow the flight, the music mood follows the state, and the heartbeat builds
+## on the final approach (and stays while a pot is at stake).
+func _update_audio(dt: float) -> void:
+	var flying := (state == APPROACH or state == ROLLOUT) and not _paused_run
+	var wx_rain := 0.7 if weather == Scenarios.RAIN else 0.0
+	if flying:
+		var kind := int(Planes.profile(plane_id)["kind"])
+		var sp := clampf(aircraft.s, 0.0, 1.4)
+		if state == APPROACH:
+			var eng := (0.5 + 0.3 * clampf(sp - 0.6, 0.0, 0.8)) * (1.0 if aircraft.power > 0.0 else 0.0)
+			sfx.set_loops(kind, eng, 0.7 + 0.5 * sp, 0.2 + 0.5 * sp + (0.2 if airfield.turb > 0.0 else 0.0), wx_rain)
+		else:
+			var g := clampf(aircraft.gs / maxf(_touch_gs, 1.0), 0.0, 1.0)
+			sfx.set_loops(kind, 0.3 + 0.15 * g, 0.65 + 0.3 * g, 0.5 * g, wx_rain * 0.8)
+	else:
+		sfx.loops_off()
+	music.set_mood(1.0 if (state == APPROACH or state == ROLLOUT or state == CARD or state == CRASH or state == CHOICE or state == CASHOUT) else 0.0)
+	var goal := 0.0
+	if state == APPROACH and not _graded:
+		goal = smoothstep(0.55, 1.0, _closeness()) * 0.55
+	_final_tension = move_toward(_final_tension, goal, dt * 0.5)
+	music.set_tension(maxf(_tension_base, _final_tension))
+
 func _on_ui_sound(kind: String) -> void:
 	match kind:
 		"stamp":
@@ -1191,6 +1230,10 @@ func _on_ui_sound(kind: String) -> void:
 			sfx.play(Sfx.COIN, 1.0 + rng.randf_range(-0.08, 0.2), -10.0)
 		"sign":
 			sfx.play(Sfx.SIGN, 1.0, -8.0)
+		"whoosh":
+			sfx.play(Sfx.WHOOSH, 1.4, -16.0)
+		"page":
+			sfx.play(Sfx.PAGE, 1.0, -10.0)
 		"fanfare":
 			sfx.play(Sfx.FANFARE, 1.0, -9.0)
 
@@ -1366,6 +1409,7 @@ func book_checkride() -> bool:
 	var fee := Career.fee(tgt, bool(Save.data["fee_halved"]))
 	if int(Save.data["coins"]) < fee:
 		hud.flash_warning("Not enough coins for the examiner", Color(1.0, 0.5, 0.4))
+		sfx.play(Sfx.DENY, 1.0, -6.0)
 		return false
 	Save.add("coins", -fee)
 	Save.data["fee_halved"] = false
@@ -1770,14 +1814,14 @@ func _enter_choice() -> void:
 	hud.set_hint("")
 	hud.show_choice({"title": "LANDED!", "pot": pot, "next_mult": pot_multiplier(), "hint": _next_hint()})
 	sfx.play(Sfx.CHIME, 1.0, -6.0)
-	music.set_tension(clampf(0.5 + 0.1 * float(landings), 0.5, 1.0))      # the heartbeat comes in: the pot is on the line
+	_set_base_tension(clampf(0.5 + 0.1 * float(landings), 0.5, 1.0))      # the heartbeat comes in: the pot is on the line
 
 func _on_choice(kind: String) -> void:
 	if state != CHOICE:
 		return
 	match kind:
 		"keep":
-			music.set_tension(clampf(0.3 + 0.1 * float(landings), 0.3, 0.9))     # ... and stays under the next approach
+			_set_base_tension(clampf(0.3 + 0.1 * float(landings), 0.3, 0.9))     # ... and stays under the next approach
 			hud.hide_choice()
 			_after_fade_over = false
 			state = FADE
@@ -1793,7 +1837,7 @@ func _start_cashout() -> void:
 	hud.show_cashout()
 	hud.fly_coins_to_bank(pot)
 	hud.confetti_burst()
-	music.set_tension(0.0)
+	_set_base_tension(0.0)
 
 ## The count-up: the number eases up to the pot with a tick for every few coins, gold sparkles at the end, then the run is over.
 func _step_cashout(dt: float) -> void:

@@ -333,7 +333,7 @@ func _ready() -> void:
 	_card_root.visible = false
 	add_child(_card_root)
 	var card_back := ColorRect.new()
-	card_back.color = Color(0.03, 0.05, 0.09, 0.62)
+	card_back.color = Color(Style.SCRIM, 0.7)
 	card_back.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	card_back.anchor_right = 1.0
 	card_back.anchor_top = 0.27
@@ -1114,7 +1114,7 @@ func hangar_visible() -> bool:
 ## The fake "Ad playing" screen (a stub for a real ad SDK): covers everything but the splash.
 func _build_ad() -> void:
 	_ad_root = ColorRect.new()
-	_ad_root.color = Color(0.04, 0.04, 0.06, 0.96)
+	_ad_root.color = Color(Style.SCRIM, 0.96)
 	_ad_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_ad_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_ad_root.visible = false
@@ -1168,14 +1168,19 @@ func _build_logbook() -> void:
 	add_child(_log_root)
 	var n := Airports.count()
 	var rows := int(ceil(float(n) / float(STAMP_COLS)))
+	var page := Panel.new()
+	page.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	page.add_theme_stylebox_override("panel", Style.box(Color(Style.SURFACE_DARK, 0.55), Style.LINE, Style.R_L, 3))
+	_log_root.add_child(page)
+	_place(page, 0, 0, 14, 682, 1052, float(rows) * 60.0 + 76.0 + float(MAX_SLIPS) * 66.0)
 	for i in n:
 		var pn := Panel.new()
 		pn.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		var st := StyleBoxFlat.new()
-		st.bg_color = Color(0.1, 0.12, 0.18, 0.7)
+		st.bg_color = Color(Style.SURFACE_DARK, 0.7)
 		st.set_border_width_all(3)
-		st.border_color = Color(0.4, 0.45, 0.55, 0.6)
-		st.set_corner_radius_all(10)
+		st.border_color = Color(Style.LINE, 0.35)
+		st.set_corner_radius_all(Style.R_S)
 		pn.add_theme_stylebox_override("panel", st)
 		_log_root.add_child(pn)
 		var col := i % STAMP_COLS
@@ -1501,6 +1506,7 @@ func _reveal(root: Control, kind: int) -> bool:
 	if _instant:
 		return true
 	_anim(root, kind)
+	ui_sound.emit("page" if kind == A_FLIP else "whoosh")
 	var d := 0
 	for c in root.get_children():
 		if not (c is Control) or not (c as Control).visible:
@@ -1891,13 +1897,13 @@ func show_logbook(body: String, stamped: Dictionary, slips: Array = []) -> void:
 		if stamped.has(a["id"]):
 			_log_stamp_names[i].text = "%s  x%d" % [a["name"], int(stamped[a["id"]]["n"])]
 			_log_stamp_names[i].modulate = Color(1, 0.95, 0.75)
-			st.border_color = Color(0.95, 0.75, 0.25, 0.95)
-			st.bg_color = Color(0.3, 0.2, 0.08, 0.75)
+			st.border_color = Style.ACCENT
+			st.bg_color = Color(Style.ACCENT_DARK, 0.35)
 		else:
 			_log_stamp_names[i].text = "- - -"
 			_log_stamp_names[i].modulate = Color(1, 1, 1, 0.35)
-			st.border_color = Color(0.4, 0.45, 0.55, 0.6)
-			st.bg_color = Color(0.1, 0.12, 0.18, 0.7)
+			st.border_color = Color(Style.LINE, 0.35)
+			st.bg_color = Color(Style.SURFACE_DARK, 0.7)
 	var shown := mini(slips.size(), MAX_SLIPS)
 	for i in MAX_SLIPS:
 		_log_slips[i].visible = i < shown

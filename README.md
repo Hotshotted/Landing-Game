@@ -3,7 +3,7 @@
 A one-thumb landing skill game for the phone (portrait, Godot 4.5, Compatibility renderer, exported to the web).
 Side view, low-poly primitives with black outlines. By **Clear Prop Games**.
 
-The look is one shared style system (palette, fonts, icons, buttons, motion), written down in `docs/style.md`. The web build has its own loading page (`web/shell.html`). The build stamp is hidden unless you add `?debug` (or `?tune` / `?perf`) to the URL.
+The look is one shared style system (palette, fonts, icons, buttons, motion), written down in `docs/style.md`. The web build has its own loading page (`web/shell.html`). The build stamp is hidden unless you add `?debug` (or `?tune` / `?perf`) to the URL. Icons and the splash come from `icon.svg` and `tools/splash.html` (`node tools/make_icons.js`); before / after screenshots of every screen are in `docs/screens/`.
 
 **Play:** https://hotshotted.github.io/Landing-Game/
 

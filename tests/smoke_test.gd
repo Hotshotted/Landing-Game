@@ -1111,10 +1111,7 @@ func run_all() -> void:
 	force(0, 2)
 	new_round(932, 5)
 	main.advance(1.0 / 60.0)
-	var raining := 0
-	for rs in main.airfield._rain:
-		if rs.visible:
-			raining += 1
+	var raining: int = main.airfield._rain_mm.multimesh.visible_instance_count
 	check(raining > 30 and main.fog.is_on() and main.airfield.wet, "rain: streaks fall (%d), the view is hazy, the runway is wet" % raining)
 	var wet_decel: float = main.airfield.surface_decel()
 	force(0, 0)
@@ -3026,6 +3023,98 @@ func run_all() -> void:
 	main.landings = 0
 	main.pot = 0
 	check(nodes() == n29, "none of it allocates a node (%d)" % (nodes() - n29))
+
+	print("== 30. audio, icon and splash, performance of the heaviest scene ==  [nodes %d]" % nodes())
+	var n30 := nodes()
+	var SFX30 = load("res://scripts/Sfx.gd")
+	var sfx30 = main.sfx
+	check(sfx30._streams.size() == 17 and sfx30._streams[SFX30.PAGE].get_length() > 0.2, "every sound in the list has a stream (%d)" % sfx30._streams.size())
+	var seamless_30 := true
+	for k_30 in [0, 1, 2, 4]:
+		var w_30: AudioStreamWAV = sfx30._engine_streams[k_30]
+		seamless_30 = seamless_30 and w_30 != null and w_30.loop_mode == AudioStreamWAV.LOOP_FORWARD and w_30.loop_end * 2 == w_30.data.size()
+	check(seamless_30 and sfx30._engine_streams[3] == null, "the engines (Cub, 172, twin, jet) are whole-cycle loops; the glider has none")
+	sfx30.set_loops(4, 0.8, 1.2, 0.5, 0.7)
+	for i in 30:
+		sfx30._process(0.05)
+	check(sfx30.engine_level() > 0.6 and sfx30._engine_player.volume_db > -30.0 and sfx30._rain_player.playing, "the jet's engine, the wind and the rain come up smoothly")
+	sfx30.set_loops(3, 0.8, 1.0, 0.5, 0.0)
+	for i in 60:
+		sfx30._process(0.05)
+	check(sfx30.engine_level() < 0.01 and sfx30._engine_player.volume_db <= -80.0 and not sfx30._rain_player.playing, "the glider is silent (just wind) and the rain stops")
+	sfx30.loops_off()
+	for i in 60:
+		sfx30._process(0.05)
+	for k_30 in [SFX30.TAP, SFX30.BACK, SFX30.CONFIRM, SFX30.DENY, SFX30.PAGE, SFX30.STAMP, SFX30.COIN, SFX30.TROMBONE, SFX30.FANFARE, SFX30.SKID, SFX30.BOOM, SFX30.SIGN]:
+		sfx30.play(k_30, 1.0, -30.0)
+	for kind in ["ghost", "primary", "gold", "danger", "secondary"]:
+		UiButton.on_down.call(kind)
+	check(UiButton.on_down.is_valid(), "buttons play their own sounds: back, confirm, deny, tap")
+	var mus_30 = main.music
+	mus_30.set_mood(0.0)
+	for i in 40:
+		mus_30._process(0.05)
+	mus_30.set_mood(1.0)
+	for i in 12:
+		mus_30._process(0.05)
+	var mid_db_30: float = mus_30._player.volume_db
+	var mid_db2_30: float = mus_30._player2.volume_db
+	for i in 40:
+		mus_30._process(0.05)
+	check(mid_db_30 > -40.0 and mid_db2_30 > -40.0 and mus_30._player.volume_db < -60.0 and mus_30._player2.volume_db > -16.0, "the music crossfades between the menu pad and the flight pad (mid %.0f / %.0f dB)" % [mid_db_30, mid_db2_30])
+	mus_30.set_mood(0.0)
+	for i in 40:
+		mus_30._process(0.05)
+	# the heartbeat builds on the final approach
+	main.start_run()
+	main._end_card()
+	main._set_base_tension(0.0)
+	main._final_tension = 0.0
+	main.state = MAIN.APPROACH
+	main._graded = false
+	main.aircraft.x = main.airfield.aim_x - 12.0
+	main.aircraft.y = main.airfield.ground_y(main.aircraft.x) + 6.0
+	for i in 40:
+		main._update_audio(0.1)
+	check(main._final_tension > 0.3 and mus_30._tension_goal > 0.3 and mus_30._mood_goal == 1.0, "tension builds on the final approach (%.2f) and the flight mood is on" % main._final_tension)
+	main.state = MAIN.MENU
+	for i in 60:
+		main._update_audio(0.1)
+	check(mus_30._tension_goal < 0.01 and mus_30._mood_goal == 0.0, "...and drains away in the menus")
+	main.sfx.loops_off()
+	# icon, splash, boot settings
+	var splash: Image = Image.load_from_file("res://assets/splash.png")
+	var icon512_30: Image = Image.load_from_file("res://icons/icon-512.png")
+	var icon192_30: Image = Image.load_from_file("res://icons/icon-192.png")
+	check(splash != null and splash.get_width() == 1080 and splash.get_height() == 1920 and icon512_30 != null and icon512_30.get_width() == 512 and icon192_30 != null and icon192_30.get_width() == 192, "the splash (1080 x 1920) and the app icons (512, 192) are in the repo")
+	check(FileAccess.file_exists("res://icons/apple-touch-icon.png") and FileAccess.file_exists("res://icon.svg") and str(ProjectSettings.get_setting("application/boot_splash/image")).ends_with("splash.png"), "the boot splash and icon files are wired up")
+	var web_shell_30 := FileAccess.get_file_as_string("res://web/shell.html")
+	check(web_shell_30.contains("Clear Prop Games") and web_shell_30.contains("$GODOT_HEAD_INCLUDE") and web_shell_30.contains("gameReady"), "the web page has the Clear Prop Games loading screen")
+	# performance: the heaviest scene (night, rain, jet), simulated at 60 fps; the CPU side of a frame must stay well under 33 ms
+	main.select_plane(PL.JET)
+	force(SC.NIGHT, SC.RAIN)
+	new_round(11, 2)
+	main.state = MAIN.APPROACH
+	var worst30 := 0.0
+	var total30 := 0.0
+	var frames30 := 0
+	for i in 600:
+		var t0_30 := Time.get_ticks_usec()
+		set_nose(-2.0)
+		main.advance(1.0 / 60.0)
+		main.hud.update(1.0 / 60.0)
+		var dtm := float(Time.get_ticks_usec() - t0_30) / 1000.0
+		if main.state == MAIN.APPROACH or main.state == MAIN.ROLLOUT:
+			worst30 = maxf(worst30, dtm)
+			total30 += dtm
+			frames30 += 1
+		if main.state != MAIN.APPROACH and main.state != MAIN.ROLLOUT:
+			break
+	print("      perf (headless, CPU only): night + rain + jet, %d frames, mean %.2f ms, worst %.2f ms" % [frames30, total30 / maxf(float(frames30), 1.0), worst30])
+	check(frames30 > 100 and worst30 < 33.0, "night + rain + jet: no frame over 33 ms (worst %.1f ms over %d frames)" % [worst30, frames30])
+	force(-1, -1)
+	main.select_plane(PL.CUB)
+	check(nodes() == n30, "none of it allocates a node (%d)" % (nodes() - n30))
 
 	print("== 9. debug flags / frame time ==  [nodes %d]" % nodes())
 	DF.parse(["nofx=smoke,shake", "perf", "round=4", "seed=9", "bogus"] as Array[String])

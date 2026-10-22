@@ -50,3 +50,24 @@ The same icon always means the same thing.
 ## Loading and the build stamp
 The web page shows `web/shell.html`'s loader (brand background, propeller, progress bar, no text) until the game reports its first screen is ready.
 The build stamp (commit, time, flags) is hidden from players: it shows only with `?debug`, `?tune` or `?perf`, small, bottom-left.
+
+## Motion (what the code does)
+Screens open with a transition by direction: forward (menu to career, logbook, hangar, certificate) slides in from the right, back slides the menu in from the left,
+modal cards (pause, choice) pop with an overshoot, the logbook turns like a page. Cards and buttons then enter one after another (`Style.STAGGER`).
+Stamps (certificate APPROVED, pink slip FAILED, POT LOST, logbook airports, ENDORSED) fall, slam, shake the screen and play a thump.
+Numbers roll up (score, pot); coins fly into the pot on a landing and from the pot into the bank on a cash-out; the certificate throws confetti.
+All of it is drawn or moved by `Hud` / `UiBurst` from fixed pools: nothing is allocated while it plays, and the headless smoke tests skip it (they check end states and,
+in section 28, run the animations by hand).
+
+## Audio
+Everything is synthesised at start-up (no audio files). Interface: tap (secondary), back (ghost), confirm (primary / gold), deny (danger), page, whoosh, stamp, coin, fanfare, trombone.
+Flight: a loop per engine (Cub, 172, twin with two engines beating, jet whine; the glider has none), wind that follows airspeed and rain; tyre skid and thud at touchdown.
+Music: a menu pad and a brighter flying pad on the same 12 s grid crossfade over 1.2 s; a heartbeat layer builds on the final approach and stays under KEEP FLYING while a pot is at stake.
+
+## App icon, splash, loading
+`icon.svg` (a Cessna with Whiskers' ears landing, PAPI lights top left, sun top right) is the source of `icons/icon-512.png`, `icon-192.png`, `apple-touch-icon.png`.
+`tools/splash.html` makes `assets/splash.png` (the native boot splash). `node tools/make_icons.js` regenerates all of them. The web build uses `web/shell.html` for its loading page.
+
+## Performance (`?perf`)
+Heaviest scene: night + rain + jet. Rain and wind streaks are one MultiMesh draw each, small details skip the outline pass, edge lights have no glow.
+The smoke test simulates it at 60 fps and fails on any frame over 33 ms of CPU time; in the browser with a software renderer (no GPU) `?perf` shows about 226 draw calls.

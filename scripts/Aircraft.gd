@@ -434,17 +434,17 @@ func _build_details() -> void:
 	# details per kind: 0 Cub, 1 Cessna 172, 2 twin, 3 glider, 4 jet
 	var k0: Array = _kind_parts[0]
 	k0.append(_part(_wheel(), Vector3(1.55, 0.55, 1.55), Vector3(3.5, 0.0, 0.0), dark, Vector3(0, 0, 90)))       # round cowling
-	k0.append(_part(BoxMesh.new(), Vector3(0.9, 0.28, 0.08), Vector3(1.5, 0.45, 0.62), glass))                   # side window
+	k0.append(_bare(_part(BoxMesh.new(), Vector3(0.9, 0.28, 0.08), Vector3(1.5, 0.45, 0.62), glass)))                   # side window
 	k0.append(_part(BoxMesh.new(), Vector3(0.12, 0.7, 0.12), Vector3(-3.7, -0.7, 0.0), dark))                    # tail skid
 	k0.append(_part(BoxMesh.new(), Vector3(0.1, 0.55, 0.1), Vector3(2.0, 0.7, 0.0), dark, Vector3(0, 0, 25)))    # exhaust stack
 	var k1: Array = _kind_parts[1]
 	k1.append(_part(_cone(), Vector3(0.7, 0.9, 0.7), Vector3(4.05, 0.0, 0.0), dark, Vector3(0, 0, -90)))         # spinner
-	k1.append(_part(BoxMesh.new(), Vector3(1.9, 0.34, 0.08), Vector3(1.1, 0.5, 0.62), glass))                    # side windows
+	k1.append(_bare(_part(BoxMesh.new(), Vector3(1.9, 0.34, 0.08), Vector3(1.1, 0.5, 0.62), glass)))                    # side windows
 	k1.append(_part(BoxMesh.new(), Vector3(4.2, 0.16, 1.25), Vector3(-0.3, -0.12, 0.0), Color(0.86, 0.2, 0.18)))  # colour stripe
 	var k2: Array = _kind_parts[2]
 	for side in [-1.0, 1.0]:
 		k2.append(_part(BoxMesh.new(), Vector3(1.9, 0.42, 0.42), Vector3(0.2, -0.22, side * 5.7), Color(0.2, 0.35, 0.75)))   # tip tanks
-	k2.append(_part(BoxMesh.new(), Vector3(2.2, 0.34, 0.08), Vector3(1.1, 0.5, 0.62), glass))
+	k2.append(_bare(_part(BoxMesh.new(), Vector3(2.2, 0.34, 0.08), Vector3(1.1, 0.5, 0.62), glass)))
 	k2.append(_part(BoxMesh.new(), Vector3(4.4, 0.16, 1.25), Vector3(-0.3, -0.12, 0.0), Color(0.2, 0.35, 0.75)))
 	var k3: Array = _kind_parts[3]
 	k3.append(_part(BoxMesh.new(), Vector3(2.6, 0.62, 0.92), Vector3(1.1, 0.78, 0.0), glass))                   # long bubble canopy
@@ -468,13 +468,13 @@ func _build_pilot() -> void:
 	_part(BoxMesh.new(), Vector3(0.82, 0.7, 0.74), Vector3(0.85, 1.32, 0.0), fur)           # head (bigger: she is the star)
 	_part(_cone(), Vector3(0.3, 0.46, 0.24), Vector3(0.6, 1.88, 0.24), fur)               # ears
 	_part(_cone(), Vector3(0.3, 0.46, 0.24), Vector3(0.6, 1.88, -0.24), fur)
-	_part(_cone(), Vector3(0.14, 0.26, 0.1), Vector3(0.6, 1.86, 0.27), Color(0.98, 0.7, 0.72))   # inner ears
-	_part(BoxMesh.new(), Vector3(0.14, 0.12, 0.14), Vector3(1.27, 1.22, 0.0), Color(0.95, 0.45, 0.5))   # nose
-	_part(BoxMesh.new(), Vector3(0.2, 0.2, 0.06), Vector3(1.0, 1.38, 0.39), Color(1, 1, 1))     # eye (white)
-	_part(BoxMesh.new(), Vector3(0.1, 0.16, 0.07), Vector3(1.04, 1.38, 0.41), dark)             # pupil
+	_bare(_part(_cone(), Vector3(0.14, 0.26, 0.1), Vector3(0.6, 1.86, 0.27), Color(0.98, 0.7, 0.72)))   # inner ears
+	_bare(_part(BoxMesh.new(), Vector3(0.14, 0.12, 0.14), Vector3(1.27, 1.22, 0.0), Color(0.95, 0.45, 0.5)))   # nose
+	_bare(_part(BoxMesh.new(), Vector3(0.2, 0.2, 0.06), Vector3(1.0, 1.38, 0.39), Color(1, 1, 1)))     # eye (white)
+	_bare(_part(BoxMesh.new(), Vector3(0.1, 0.16, 0.07), Vector3(1.04, 1.38, 0.41), dark))             # pupil
 	for k in 3:                                                                               # whiskers, fanned, on the visible cheek
 		var ang := (float(k) - 1.0) * 14.0
-		_part(BoxMesh.new(), Vector3(0.62, 0.035, 0.03), Vector3(1.5, 1.2 + (float(k) - 1.0) * 0.07, 0.4), Color(1, 1, 1), Vector3(0, 0, ang))
+		_bare(_part(BoxMesh.new(), Vector3(0.62, 0.035, 0.03), Vector3(1.5, 1.2 + (float(k) - 1.0) * 0.07, 0.4), Color(1, 1, 1), Vector3(0, 0, ang)))
 	_part(BoxMesh.new(), Vector3(0.36, 0.7, 0.2), Vector3(-0.35, 0.82, 0.0), fur, Vector3(0, 0, 10))   # body behind the head
 	var goggles: Array[MeshInstance3D] = []
 	goggles.append(_part(BoxMesh.new(), Vector3(0.16, 0.26, 0.8), Vector3(1.12, 1.4, 0.0), Color(0.12, 0.12, 0.14)))
@@ -532,6 +532,11 @@ func _mat(c: Color) -> StandardMaterial3D:
 	m.albedo_color = c
 	m.roughness = 1.0
 	return m
+
+## Small details are drawn without the black outline (it would swamp them, and every outline is a second draw call).
+func _bare(mi: MeshInstance3D) -> MeshInstance3D:
+	mi.material_overlay = null
+	return mi
 
 func _part(mesh: Mesh, size: Vector3, pos: Vector3, color: Color, rot_deg: Vector3 = Vector3.ZERO, role: String = "") -> MeshInstance3D:
 	var mi := MeshInstance3D.new()

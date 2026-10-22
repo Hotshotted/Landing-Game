@@ -131,7 +131,7 @@ var _wheels: Array[MeshInstance3D] = []
 var _road: MeshInstance3D
 var _waves: Array[MeshInstance3D] = []
 var _wave_x := PackedFloat32Array()
-var _rain: Array[MeshInstance3D] = []
+var _rain_mm: MultiMeshInstance3D           # all the rain streaks in one draw call
 var _rain_pos := PackedVector3Array()
 var _trees: Array[Node3D] = []
 var _deco: Array[Node3D] = []
@@ -148,7 +148,7 @@ var _beacons: Array[Node3D] = []              # [tallest tree top, hill peak]: b
 var _beacon_mats: Array[StandardMaterial3D] = []
 var _zs := 1.0                                # current runway z-stretch
 var _mark := 1.0                              # current marker scale (posts, PAPI, beacons, windsock)
-var _streaks: Array[MeshInstance3D] = []
+var _streak_mm: MultiMeshInstance3D         # ... and all the wind streaks
 var _streak_pos := PackedVector3Array()
 var _sock_root: Node3D
 var _sock_pivot: Node3D
@@ -235,13 +235,8 @@ func build_pools() -> void:
 	smat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	smat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	smat.albedo_color = Color(1, 1, 1, 0.5)
+	_streak_mm = _make_mm(_box, smat, MAX_STREAKS)
 	for i in MAX_STREAKS:
-		var st := MeshInstance3D.new()
-		st.mesh = _box
-		st.material_override = smat
-		st.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		add_child(st)
-		_streaks.append(st)
 		_streak_pos[i] = Vector3((i * 7919 % 100) / 100.0, 3.0 + float(i * 4373 % 100) * 0.35, 3.0 + float(i % 4))
 	_build_sock()
 	generate(1, RandomNumberGenerator.new())
@@ -312,15 +307,24 @@ func _build_scenario_pools() -> void:
 	rmat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	rmat.albedo_color = Color(0.75, 0.85, 1.0, 0.55)
 	_rain_pos.resize(MAX_RAIN)
+	_rain_mm = _make_mm(_box, rmat, MAX_RAIN)
 	for i in MAX_RAIN:
-		var rs := MeshInstance3D.new()
-		rs.mesh = _box
-		rs.material_override = rmat
-		rs.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		rs.rotation_degrees = Vector3(0, 0, 12)
-		add_child(rs)
-		_rain.append(rs)
 		_rain_pos[i] = Vector3(float(i * 7919 % 100) / 100.0, float(i * 4373 % 100) / 100.0, 4.0 + float(i % 3))
+
+## `n` instances of one mesh in a single draw call (positions are set every frame through set_instance_transform).
+func _make_mm(mesh: Mesh, mat: Material, n: int) -> MultiMeshInstance3D:
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.mesh = mesh
+	mm.instance_count = n
+	mm.visible_instance_count = 0
+	var mi := MultiMeshInstance3D.new()
+	mi.multimesh = mm
+	mi.material_override = mat
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	mi.custom_aabb = AABB(Vector3(-2000, -500, -50), Vector3(4000, 1000, 100))     # (positions follow the camera: never culled)
+	add_child(mi)
+	return mi
 
 func _build_sock() -> void:
 	_sock_root = Node3D.new()
@@ -750,7 +754,7 @@ func _build_lights() -> void:
 	var n := int(rwy_len / step)
 	for i in n + 1:
 		for side in [-1.0, 1.0]:
-			_set_light(Vector3(thr + float(i) * step, 0.35, side * (_half_z - 0.3)), Color(1.0, 0.95, 0.7))
+			_set_light(Vector3(thr + float(i) * step, 0.35, side * (_half_z - 0.3)), Color(1.0, 0.95, 0.7), false)
 	for i in 6:
 		_set_light(Vector3(thr + 0.4, 0.35, -_half_z + 0.6 + float(i) * (2.0 * _half_z - 1.2) / 5.0), Color(0.2, 1.0, 0.35))
 		_set_light(Vector3(rwy_end - 0.4, 0.35, -_half_z + 0.6 + float(i) * (2.0 * _half_z - 1.2) / 5.0), Color(1.0, 0.2, 0.15))
@@ -759,12 +763,13 @@ func _build_lights() -> void:
 		_set_light(Vector3(thr - 20.0 * float(k + 1), 0.35, 0.0), Color(1, 1, 1))
 	_approach_count = 16
 
-func _set_light(pos: Vector3, color: Color) -> void:
+func _set_light(pos: Vector3, color: Color, glow: bool = true) -> void:
 	if _light_used >= MAX_LIGHTS:
 		return
 	_lights[_light_used].position = pos
 	_light_mats[_light_used].albedo_color = color
 	_halo_mats[_light_used].albedo_color = Color(color.r, color.g, color.b, 0.3)
+	(_lights[_light_used].get_child(0) as Node3D).visible = glow       # (edge lights stay plain: fewer draw calls)
 	_light_used += 1
 
 ## Posts and the PAPI sit just outside the runway edge, which moves out when the runway is stretched in z; they ride on
@@ -928,28 +933,25 @@ func update(dt: float, cam_x: float, view_w: float, head: float, cam_y: float = 
 	var vs := get_viewport().get_visible_rect().size
 	var view_h := view_w * vs.y / maxf(vs.x, 1.0)
 	var rk := clampf(view_w / 54.0, 1.0, 8.0)
-	for i in MAX_RAIN:
-		var rs := _rain[i]
-		rs.visible = raining
-		if not raining:
-			continue
-		var p := _rain_pos[i]
-		var fall := fposmod(p.y * view_h + _t * (30.0 + 0.5 * view_w) * (0.8 + 0.1 * p.z), view_h)
-		rs.position = Vector3(cam_x + (p.x - 0.5) * (view_w + 8.0) - fall * 0.2, cam_y + view_h * 0.5 - fall, p.z)
-		rs.scale = Vector3(0.05 * rk, 1.5 * rk, 0.05)
+	var rmm := _rain_mm.multimesh
+	rmm.visible_instance_count = MAX_RAIN if raining else 0
+	if raining:
+		var tilt := Basis(Vector3(0, 0, 1), deg_to_rad(12.0)).scaled(Vector3(0.05 * rk, 1.5 * rk, 0.05))
+		for i in MAX_RAIN:
+			var p := _rain_pos[i]
+			var fall := fposmod(p.y * view_h + _t * (30.0 + 0.5 * view_w) * (0.8 + 0.1 * p.z), view_h)
+			rmm.set_instance_transform(i, Transform3D(tilt, Vector3(cam_x + (p.x - 0.5) * (view_w + 8.0) - fall * 0.2, cam_y + view_h * 0.5 - fall, p.z)))
 	# wind streaks
 	var half := view_w * 0.5 + 6.0
 	var show_wind := not DebugFlags.off("wind")
-	for i in MAX_STREAKS:
-		var st := _streaks[i]
-		st.visible = show_wind
-		if not show_wind:
-			continue
-		var sp := _streak_pos[i]
-		# sp.x is the streak's x offset from the camera in half-widths (-1..1), sp.y its height, sp.z its depth
-		var wx := cam_x + sp.x * half * 2.0 - half
-		st.position = Vector3(wx, sp.y, sp.z)
-		st.scale = Vector3(1.0 + absf(head) * 0.25, 0.07, 0.07)
+	var smm := _streak_mm.multimesh
+	smm.visible_instance_count = MAX_STREAKS if show_wind else 0
+	if show_wind:
+		var sb := Basis.IDENTITY.scaled(Vector3(1.0 + absf(head) * 0.25, 0.07, 0.07))
+		for i in MAX_STREAKS:
+			var sp := _streak_pos[i]
+			# sp.x is the streak's x offset from the camera in half-widths (-1..1), sp.y its height, sp.z its depth
+			smm.set_instance_transform(i, Transform3D(sb, Vector3(cam_x + sp.x * half * 2.0 - half, sp.y, sp.z)))
 	# windsock: droops when calm, sticks out straight in a strong wind, points downwind. A wind-shear warning snaps it round.
 	var sock_head := head
 	if _sock_snap > 0.0:
@@ -998,8 +1000,7 @@ func prewarm_show() -> void:
 	_hill.visible = true
 	for d in _dashes:
 		d.visible = true
-	for st in _streaks:
-		st.visible = true
+	_streak_mm.multimesh.visible_instance_count = MAX_STREAKS
 	for b in _beacons:
 		b.visible = true
 	_ramp_root.visible = true
