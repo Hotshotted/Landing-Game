@@ -149,6 +149,13 @@ srv.listen(0, async () => {
     // 6. Resume
     const rp = visibleState.game && visibleState.game.resume ? visibleState.game.resume : [195, 311];
     await page.touchscreen.tap(rp[0], rp[1]);
+    // (the game handles the tap on its next frame, which can take a while under CPU throttling: wait until it has let the sound go,
+    // then measure; if it never does, the "after Resume" checks below fail)
+    for (let w = 0; w < 80; w++) {
+      const st = await state();
+      if (st.game && st.game.held === false && st.ctx.length && st.ctx.every(c => c === 'running')) break;
+      await page.waitForTimeout(250);
+    }
     marks.resume = await nowSec();
     await page.waitForTimeout(7000);
     marks.end = await nowSec();
