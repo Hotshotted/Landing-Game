@@ -113,9 +113,9 @@ static func count(data: Dictionary, scn: int) -> int:
 	return int((_prof(data)["counts"] as Dictionary).get(str(scn), 0))
 
 ## A practice landing that met the standard: one more on that meter (capped).
-static func add_practice(data: Dictionary, scn: int) -> int:
+static func add_practice(data: Dictionary, scn: int, amount: int = 1) -> int:
 	var counts: Dictionary = _prof(data)["counts"]
-	counts[str(scn)] = mini(count(data, scn) + 1, needed())
+	counts[str(scn)] = mini(count(data, scn) + maxi(amount, 0), needed())
 	return int(counts[str(scn)])
 
 ## The types of the rank being trained for whose meter isn't full yet.

@@ -28,6 +28,13 @@ const HAZARD_TRUNK := Color(0.42, 0.26, 0.12)
 const HAZARD_HILL := Color(0.58, 0.7, 0.2)
 const MAX_TREES := 8
 const MAX_DECO := 30
+## Every flat layer on the ground has its own height, 0.02 or more apart (about three depth steps of a 16-bit buffer at the
+## shallowest camera tilt), so no two layers share a depth and nothing flickers over anything else. The value is the layer's TOP.
+## Painted layers are 0.03 thick; the runway 0.12. Smoke test: `layer_tops()` must be unique and at least LAYER_GAP apart.
+const LAYER_GAP := 0.02
+const LAYERS := {"ground": 0.0, "road": 0.04, "runway": 0.08, "dashes": 0.12, "bars": 0.14, "edge_lines": 0.16, "tz_bars": 0.18,
+	"aim_slabs": 0.20, "end_bar": 0.22, "wires": 0.26}
+const PAINT_H := 0.03
 const MAX_DASHES := 40
 const MAX_BARS := 6
 const MAX_HILLS := 14
@@ -399,6 +406,21 @@ func _place(m: Node3D, pos: Vector3, size: Vector3) -> void:
 	m.scale = size
 	m.visible = true
 
+## The top height of every flat ground layer as it is placed right now (name -> y), for the smoke test.
+func layer_tops() -> Dictionary:
+	return {
+		"ground": _ground.position.y + _ground.scale.y * 0.5,
+		"road": _road.position.y + _road.scale.y * 0.5,
+		"runway": _rwy.position.y + _rwy.scale.y * 0.5,
+		"dashes": _dashes[0].position.y + _dashes[0].scale.y * 0.5,
+		"bars": _bars[0].position.y + _bars[0].scale.y * 0.5,
+		"edge_lines": _edge_lines[0].position.y + _edge_lines[0].scale.y * 0.5,
+		"tz_bars": _tz_bars[0].position.y + _tz_bars[0].scale.y * 0.5,
+		"aim_slabs": _aim_slabs[0].position.y + _aim_slabs[0].scale.y * 0.5,
+		"end_bar": _end_bar.position.y + _end_bar.scale.y * 0.5,
+		"wires": _wires[0].position.y + _wires[0].scale.y * 0.5,
+	}
+
 ## The aircraft the next round is generated for.
 func set_plane(id: int) -> void:
 	var pr: Dictionary = Planes.profile(id)
@@ -625,7 +647,7 @@ func build() -> void:
 	_slope_root.rotation = Vector3(0.0, 0.0, atan(slope_m))
 	_rwy_root.position = Vector3(-_pivot0, 0.0, 0.0)
 	_extras_root.position = Vector3.ZERO
-	_place(_rwy, Vector3((thr + rwy_end) * 0.5, -0.02, 0.0), Vector3(rwy_len, 0.12, _half_z * 2.0))
+	_place(_rwy, Vector3((thr + rwy_end) * 0.5, LAYERS["runway"] - 0.06, 0.0), Vector3(rwy_len, 0.12, _half_z * 2.0))
 	var line_col := Color(0.97, 0.97, 0.95) if surface == ASPHALT or surface == DECK else Color(0.95, 0.9, 0.7)
 	var paint := surface != WATER and surface != TRUCK
 	var dash_n := mini(int(rwy_len / 28.0), MAX_DASHES) if paint else 0
@@ -634,27 +656,27 @@ func build() -> void:
 		d.visible = i < dash_n
 		if d.visible:
 			_set_color(d, line_col)
-			_place(d, Vector3(thr + 36.0 + float(i) * 28.0 + 7.0, 0.05, 0.0), Vector3(14.0, 0.03, 0.8))
+			_place(d, Vector3(thr + 36.0 + float(i) * 28.0 + 7.0, LAYERS["dashes"] - PAINT_H * 0.5, 0.0), Vector3(14.0, PAINT_H, 0.8))
 			d.visible = d.position.x < rwy_end - 20.0
 	for i in MAX_BARS:
 		var b := _bars[i]
 		b.visible = paint
 		_set_color(b, line_col)
-		_place(b, Vector3(thr + 5.0, 0.05, -_half_z + 1.5 + float(i) * (2.0 * _half_z - 3.0) / float(MAX_BARS - 1)), Vector3(8.0, 0.03, 0.8))
+		_place(b, Vector3(thr + 5.0, LAYERS["bars"] - PAINT_H * 0.5, -_half_z + 1.5 + float(i) * (2.0 * _half_z - 3.0) / float(MAX_BARS - 1)), Vector3(8.0, PAINT_H, 0.8))
 		b.visible = paint
 	for k in 2:
 		var side := -1.0 if k == 0 else 1.0
-		_place(_aim_slabs[k], Vector3(aim_x, 0.06, side * _half_z * 0.5), Vector3(20.0, 0.03, 1.3))
+		_place(_aim_slabs[k], Vector3(aim_x, LAYERS["aim_slabs"] - PAINT_H * 0.5, side * _half_z * 0.5), Vector3(20.0, PAINT_H, 1.3))
 	for k in 3:
 		for side in 2:
 			var tz := _tz_bars[k * 2 + side]
 			var zz := (-1.0 if side == 0 else 1.0) * _half_z * 0.5
-			_place(tz, Vector3(aim_x + 34.0 * float(k + 1), 0.055, zz), Vector3(11.0, 0.03, 1.0))
+			_place(tz, Vector3(aim_x + 34.0 * float(k + 1), LAYERS["tz_bars"] - PAINT_H * 0.5, zz), Vector3(11.0, PAINT_H, 1.0))
 			_set_color(tz, line_col)
 			tz.visible = paint and aim_x + 34.0 * float(k + 1) < rwy_end - 30.0
 	for side in 2:
 		var el := _edge_lines[side]
-		_place(el, Vector3((thr + rwy_end) * 0.5, 0.052, (-1.0 if side == 0 else 1.0) * (_half_z - 0.55)), Vector3(rwy_len - 6.0, 0.03, 0.35))
+		_place(el, Vector3((thr + rwy_end) * 0.5, LAYERS["edge_lines"] - PAINT_H * 0.5, (-1.0 if side == 0 else 1.0) * (_half_z - 0.55)), Vector3(rwy_len - 6.0, PAINT_H, 0.35))
 		_set_color(el, line_col)
 		el.visible = paint
 	var show_sign := paint and surface != DECK
@@ -668,13 +690,13 @@ func build() -> void:
 		var num := str(int(rwy_len / 4.0) % 35 + 1).pad_zeros(2)
 		if _sign_label.text != num:
 			_sign_label.text = num
-	_place(_end_bar, Vector3(rwy_end - 0.6, 0.06, 0.0), Vector3(1.2, 0.03, _half_z * 2.0))
+	_place(_end_bar, Vector3(rwy_end - 0.6, LAYERS["end_bar"] - PAINT_H * 0.5, 0.0), Vector3(1.2, PAINT_H, _half_z * 2.0))
 	_end_bar.visible = surface != WATER
 	# carrier wires
 	for i in 4:
 		_wires[i].visible = has_wires
 		if has_wires:
-			_place(_wires[i], Vector3(aim_x + (float(i) - 1.5) * Tuning.carrier_wire_half * 0.66, 0.07, 0.0), Vector3(0.35, 0.05, _half_z * 1.7))
+			_place(_wires[i], Vector3(aim_x + (float(i) - 1.5) * Tuning.carrier_wire_half * 0.66, LAYERS["wires"] - 0.025, 0.0), Vector3(0.35, 0.05, _half_z * 1.7))
 	for i in MAX_TREES:
 		var t := _trees[i]
 		t.visible = i < tree_count
@@ -735,7 +757,7 @@ func _build_extras() -> void:
 		_place(_cab, Vector3(rwy_end + 3.6, 2.3, 0.0), Vector3(6.0, 4.6, _half_z * 2.0))
 		for i in 3:
 			_place(_wheels[i], Vector3(thr + 3.0 + float(i) * (rwy_len - 6.0) * 0.5, 1.0, 0.0), Vector3(2.0, _half_z * 2.0 + 1.2, 2.0))
-		_place(_road, Vector3((thr + rwy_end) * 0.5, -0.05, 0.0), Vector3(rwy_end + 500.0, 0.1, 20.0))
+		_place(_road, Vector3((thr + rwy_end) * 0.5, LAYERS["road"] - 0.05, 0.0), Vector3(rwy_end + 500.0, 0.1, 20.0))
 	var water := surface == WATER
 	for i in MAX_WAVES:
 		_waves[i].visible = water

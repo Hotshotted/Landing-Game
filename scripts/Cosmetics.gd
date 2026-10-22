@@ -49,7 +49,7 @@ static func buy(data: Dictionary, kind: String, idx: int) -> bool:
 ## Buy an aircraft with coins (does nothing if it is free, already bought or can't be afforded).
 static func buy_plane(data: Dictionary, id: int) -> bool:
 	var own: Array = data["owned_planes"]
-	if own.has(id) or Planes.price(id) == 0:
+	if own.has(id):
 		return true
 	if int(data["coins"]) < Planes.price(id):
 		return false

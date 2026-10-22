@@ -140,6 +140,11 @@ func run_all() -> void:
 	var ADS: GDScript = load("res://scripts/Ads.gd")
 	ADS.enabled = false          # (section 18 tests the ad stubs)
 	SV.data["unlock_all"] = true      # (the earlier sections fly every aircraft and scenario; section 17 tests the locks)
+	# the flight-school money is tested in section 32; everywhere else flying costs nothing
+	var rent_defaults: Dictionary = {}
+	for k in ["rent_cub", "rent_172", "rent_glider", "rent_twin", "rent_jet", "damage_mult"]:
+		rent_defaults[k] = tn.get(k)
+		tn.set(k, 0)
 	print("== 1. boot ==  [nodes %d]" % nodes())
 	var scene: PackedScene = load("res://scenes/main.tscn")
 	main = scene.instantiate()
@@ -421,7 +426,7 @@ func run_all() -> void:
 		if main.state == MAIN.CHOICE:
 			break
 	check(main.state == MAIN.CHOICE and main.hud.choice_visible(), "after the rollout the choice screen shows")
-	check(main.pot > 0 and main.hud._ch_pot.text.contains(str(main.pot)) and main.hud._ch_next.text.contains("x1.2") and main.hud._ch_hint.text.begins_with("Next:"), "...with the pot (%d), the next multiplier (%s) and a hint (%s)" % [main.pot, main.hud._ch_next.text, main.hud._ch_hint.text.split("\n")[0]])
+	check(main.pot > 0 and main.hud._ch_pot.text.contains(str(main.pot)) and main.hud._ch_next.text.contains("x%.1f" % (1.0 + tn.pot_step)) and main.hud._ch_hint.text.begins_with("Next:"), "...with the pot (%d), the next multiplier (%s) and a hint (%s)" % [main.pot, main.hud._ch_next.text, main.hud._ch_hint.text.split("\n")[0]])
 	check(main.hud._ch_cash.visible and main.hud._ch_keep.visible, "...and CASH OUT / KEEP FLYING")
 	var pot_kept: int = main.pot
 	main._on_choice("keep")
@@ -1607,11 +1612,15 @@ func run_all() -> void:
 	main._end_card()
 	check(main.available_planes() == [PL.CUB], "a Student's selector only offers the Cub")
 	var only_ok := true
+	var soft_n := 0
 	for i in 40:
 		main._begin_round(false)
-		if main.scenario != SC.STANDARD or main.weather != SC.CLEAR:
+		if (main.scenario != SC.STANDARD and main.scenario != SC.SOFT_FIELD) or main.weather != SC.CLEAR:
 			only_ok = false
-	check(only_ok, "a Student only gets normal landings in clear weather over 40 approaches")
+		if main.scenario == SC.SOFT_FIELD:
+			soft_n += 1
+	check(only_ok, "a Student only gets normal and soft-field landings (the types being trained) in clear weather over 40 approaches")
+	check(soft_n >= 8, "free flight favours the landing type still to fill (%d soft fields in 40 approaches)" % soft_n)
 	SV.data["rank"] = 3
 	CAR.on_rank_change(SV.data, 3)
 	var seen_scn2 := {}
@@ -2517,6 +2526,7 @@ func run_all() -> void:
 	check(is_equal_approx(main.pot_multiplier(), 1.0), "the first landing pays x1.0")
 	# land three greasers in a row: the pot grows by the grade's coins x the Greaser streak x the pot multiplier
 	var expect_pot := 0
+	force(SC.STANDARD, SC.CLEAR)       # (free flight now favours the types being trained: pin the landing type for this check)
 	for k in 3:
 		new_round(2400 + k, 2 + k)
 		main.state = MAIN.APPROACH
@@ -2535,6 +2545,7 @@ func run_all() -> void:
 					main._end_card()
 				if main.state == MAIN.APPROACH:
 					break
+	force(-1, -1)
 	# the choice screen: pot, next multiplier, a hint about what is coming
 	main._next_pick = Vector2i(SC.SHORT_FIELD, SC.FOG)
 	main.hud.show_choice({"title": "LANDED!", "pot": main.pot, "next_mult": main.pot_multiplier(), "hint": main._next_hint()})
@@ -2740,41 +2751,64 @@ func run_all() -> void:
 	main._skip_frames = 0
 	force(-1, -1)
 
-	print("== 26. aircraft are bought with coins ==  [nodes %d]" % nodes())
+	print("== 26. aircraft: rent it per flight, or buy it ==  [nodes %d]" % nodes())
+	for k in rent_defaults:
+		tn.set(k, rent_defaults[k])
+	var EC = load("res://scripts/Economy.gd")
 	SV.data = SV.default_data()
 	main.start_run()
 	main._end_card()
 	main.state = MAIN.MENU
 	main._show_menu()
-	check(PL.price(PL.CUB) == 0 and PL.price(PL.C172) > 0 and PL.price(PL.JET) > PL.price(PL.TWIN) and PL.price(PL.TWIN) > PL.price(PL.C172), "the Cub is free, the others have prices that grow (172 %d, twin %d, glider %d, jet %d)" % [PL.price(PL.C172), PL.price(PL.TWIN), PL.price(PL.GLIDER), PL.price(PL.JET)])
-	check(main.available_planes() == [PL.CUB], "a new pilot has the Cub")
-	main._on_menu_action("hangar")
-	check(main.hud._hangar_planes.size() == 5 and main.hud._hangar_planes[0].text == "[CUB]" and main.hud._hangar_planes[1].text.contains(str(PL.price(PL.C172))), "the hangar lists the aircraft with their prices (%s)" % main.hud._hangar_planes[1].text)
-	main._on_hangar_pick("plane", PL.C172)
-	check(not main.available_planes().has(PL.C172) and main.plane_id == PL.CUB, "without the coins you can't buy it")
-	SV.data["coins"] = PL.price(PL.C172) + 30
-	main._on_hangar_pick("plane", PL.C172)
-	check(main.available_planes().has(PL.C172) and main.plane_id == PL.C172 and SV.data["coins"] == 30 and SV.data["owned_planes"] == [PL.C172], "buying takes the price and you fly it")
-	check(main.hud._hangar_planes[1].text == "[172]", "(%s)" % main.hud._hangar_planes[1].text)
-	var kept: Dictionary = SV.migrate(SV.data)
-	check(kept["owned_planes"] == [PL.C172] and kept["settings"]["sound"] == 1.0, "bought aircraft survive the save (and the settings have defaults)")
+	check(PL.price(PL.CUB) > 0 and PL.price(PL.CUB) < PL.price(PL.C172) and PL.price(PL.C172) < PL.price(PL.GLIDER) and PL.price(PL.GLIDER) < PL.price(PL.TWIN) and PL.price(PL.TWIN) < PL.price(PL.JET), "prices grow Cub < 172 < glider < twin < jet (%d, %d, %d, %d, %d)" % [PL.price(PL.CUB), PL.price(PL.C172), PL.price(PL.GLIDER), PL.price(PL.TWIN), PL.price(PL.JET)])
+	check(EC.rent(PL.CUB) > 0 and EC.rent(PL.CUB) < EC.rent(PL.C172) and EC.rent(PL.C172) < EC.rent(PL.GLIDER) and EC.rent(PL.GLIDER) < EC.rent(PL.TWIN) and EC.rent(PL.TWIN) < EC.rent(PL.JET), "rental per flight is scaled by type: Cub cheap, jet dear (%d, %d, %d, %d, %d)" % [EC.rent(PL.CUB), EC.rent(PL.C172), EC.rent(PL.GLIDER), EC.rent(PL.TWIN), EC.rent(PL.JET)])
+	check(main.available_planes() == [PL.CUB] and main.hud._sel_rent.text.contains("WAIVED"), "a new, broke pilot rents the Cub, and the fee is waived so nobody is stuck (%s)" % main.hud._sel_rent.text)
+	main.start_run()
+	check(SV.data["coins"] == 0 and main.rental_paid == 0, "...so the flight costs nothing")
+	SV.data["coins"] = 100
+	main._show_menu()
+	check(main.hud._sel_rent.text == "RENT  %d coins per flight" % EC.rent(PL.CUB), "the selector shows the rental (%s)" % main.hud._sel_rent.text)
 	main.start_run()
 	main._end_card()
-	check(main.plane_id == PL.C172 and main.available_planes() == [PL.CUB, PL.C172], "a run starts in the aircraft you bought")
-	# balance: what a typical cash-out buys
-	var typical := func(n: int, base: Array) -> int:
-		var total := 0.0
-		for k in n:
-			total += float(base[k % base.size()]) * (1.0 + step * float(k))
-		return int(roundf(total))
-	var casual: int = typical.call(4, [COS.coins_for(2, 1), COS.coins_for(1, 1)])
-	var good_run: int = typical.call(5, [COS.coins_for(1, 1), COS.coins_for(2, 1), COS.coins_for(1, 1)])
-	var greasers := 0.0
-	for k in 5:
-		greasers += float(COS.coins_for(0, k + 1)) * (1.0 + step * float(k))
-	print("      balance: casual 4-landing cash-out %d coins, good 5-landing %d, five greasers in a row %d | 172 %d, glider %d, twin %d, jet %d" % [casual, good_run, int(greasers), PL.price(PL.C172), PL.price(PL.GLIDER), PL.price(PL.TWIN), PL.price(PL.JET)])
-	check(PL.price(PL.C172) <= good_run * 3 and PL.price(PL.C172) >= casual and PL.price(PL.JET) <= int(greasers) * 3 and PL.price(PL.JET) >= good_run * 4, "prices are balanced against cash-outs: the 172 is a few runs, the jet is a real goal")
-	check(CAR.fee(7) <= int(greasers) and CAR.fee(1) < casual, "(and the examiner's fees stay within a cash-out or two)")
+	check(SV.data["coins"] == 100 - EC.rent(PL.CUB) and main.rental_paid == EC.rent(PL.CUB) and main.hud.toast_log.back().contains("Rental"), "a run in a rented aircraft takes the rental fee at the start")
+	var coins_before_crash26: int = SV.data["coins"]
+	main._crash("test")
+	check(SV.data["coins"] == coins_before_crash26 - EC.damage_fee(PL.CUB) and main.damage_paid == EC.damage_fee(PL.CUB) and main.hud._pop_sub.text.contains("Damage fee"), "a crash in a rented aircraft adds a damage fee (%d)" % main.damage_paid)
+	main._show_menu()
+	main._on_menu_action("hangar")
+	check(main.hud._hangar_planes.size() == 5 and main.hud._hangar_planes[0].text.contains("[CUB]") and main.hud._hangar_buy[0].text.contains(str(PL.price(PL.CUB))) and main.hud._hangar_planes[1].disabled, "the hangar lists each aircraft with its buy price; one your rank hasn't unlocked can't be rented (%s / %s)" % [main.hud._hangar_planes[1].text, main.hud._hangar_buy[0].text])
+	main._on_hangar_pick("plane_buy", PL.CUB)
+	check(not EC.owns(SV.data, PL.CUB), "without the coins you can't buy it")
+	SV.data["coins"] = PL.price(PL.CUB) + 50
+	main._on_hangar_pick("plane_buy", PL.CUB)
+	check(EC.owns(SV.data, PL.CUB) and SV.data["coins"] == 50 and main.hud._hangar_buy[0].text == "OWNED", "buying takes the price and ends the rental")
+	main._show_menu()
+	check(main.hud._sel_rent.text.contains("OWNED"), "the selector says OWNED (%s)" % main.hud._sel_rent.text)
+	main.start_run()
+	main._end_card()
+	check(SV.data["coins"] == 50 and main.rental_paid == 0, "an owned aircraft flies for free")
+	main._crash("test")
+	check(SV.data["coins"] == 50 and main.damage_paid == 0, "...and a crash in it adds no damage fee")
+	main._show_menu()
+	SV.data["coins"] = PL.price(PL.C172) + 30
+	main._on_hangar_pick("plane", PL.C172)
+	check(main.plane_id == PL.CUB, "an aircraft your rank hasn't unlocked can't be rented")
+	main._on_hangar_pick("plane_buy", PL.C172)
+	check(main.available_planes().has(PL.C172) and main.plane_id == PL.C172 and SV.data["coins"] == 30 and SV.data["owned_planes"].has(PL.C172), "buying the 172 unlocks it and you fly it")
+	var kept: Dictionary = SV.migrate(SV.data)
+	check(kept["owned_planes"].has(PL.C172) and kept["settings"]["sound"] == 1.0, "bought aircraft survive the save (and the settings have defaults)")
+	check(SV.migrate({"version": 2, "coins": 5})["owned_planes"] == [PL.CUB], "an older save keeps the Cub it always had")
+	SV.data["unlock_all"] = true
+	SV.data["owned_planes"] = []
+	SV.data["coins"] = 5
+	main.select_plane(PL.JET)
+	main.start_run()
+	main._end_card()
+	check(main.plane_id == PL.CUB and main.hud.toast_log.any(func(t): return t.begins_with("Can't pay")) and SV.data["coins"] == 5, "too poor for the jet's rental: the run goes ahead in the Cub with a toast")
+	main._show_menu()
+	SV.data["unlock_all"] = true
+	for k in rent_defaults:
+		tn.set(k, 0)
 	force(-1, -1)
 
 	print("== 27. the shared style (docs/style.md): tokens, icons, buttons, safe areas ==  [nodes %d]" % nodes())
@@ -3122,6 +3156,150 @@ func run_all() -> void:
 	force(-1, -1)
 	main.select_plane(PL.CUB)
 	check(nodes() == n30, "none of it allocates a node (%d)" % (nodes() - n30))
+
+	print("== 31. ground layers: explicit depths, no coplanar overlaps ==  [nodes %d]" % nodes())
+	var n31 := nodes()
+	var AFC = load("res://scripts/Airfield.gd")
+	var tops31: Array = AFC.LAYERS.values()
+	tops31.sort()
+	var gap31 := 99.0
+	for i in range(1, tops31.size()):
+		gap31 = minf(gap31, float(tops31[i]) - float(tops31[i - 1]))
+	check(tops31.size() == 10 and gap31 >= AFC.LAYER_GAP - 0.0001, "the ten ground layers have ten different depths, at least %.2f apart (smallest gap %.3f)" % [AFC.LAYER_GAP, gap31])
+	var worst_gap31 := 99.0
+	var combos31 := 0
+	var layers_ok := true
+	var cam_ok := true
+	for scn in SC.COUNT:
+		for wx in SC.WX_COUNT:
+			if not SC.combo_ok(scn, wx):
+				continue
+			force(scn, wx)
+			new_round(40 + scn * 7 + wx, 5)
+			main.advance(1.0 / 60.0)
+			combos31 += 1
+			var live: Dictionary = main.airfield.layer_tops()
+			var vals: Array = live.values()
+			vals.sort()
+			for i in range(1, vals.size()):
+				worst_gap31 = minf(worst_gap31, float(vals[i]) - float(vals[i - 1]))
+			for k in AFC.LAYERS:
+				layers_ok = layers_ok and absf(float(live[k]) - float(AFC.LAYERS[k])) < 0.0005
+			cam_ok = cam_ok and main.camera.near >= 1.0 and main.camera.near < 80.0 and main.camera.far > 80.0 and main.camera.far - main.camera.near < 700.0
+	force(-1, -1)
+	check(layers_ok and worst_gap31 >= AFC.LAYER_GAP - 0.0001, "in all %d scenario / weather combinations every layer sits at its own height (gap %.3f)" % [combos31, worst_gap31])
+	check(cam_ok, "the camera's depth range hugs the view (it never spans more than 700 units)")
+	check(nodes() == n31, "(nothing allocated)")
+
+	print("== 32. career and free flight are one: every landing to standard fills its meter ==  [nodes %d]" % nodes())
+	var n32 := nodes()
+	SV.data = SV.default_data()
+	SV.data["unlock_all"] = true
+	SV.data["owned_planes"] = [0, 1, 2, 3, 4]
+	main.start_run()
+	main._end_card()
+	force(SC.STANDARD, SC.CLEAR)
+	new_round(3201, 5)
+	main.state = MAIN.APPROACH
+	main.hud.toast_log.clear()
+	land_at(0.3, 0.0)
+	main._finish_round(false)
+	check(CAR.count(SV.data, SC.STANDARD) == 1 and main.hud.toast_log.any(func(t): return t.begins_with("Normal Landing  +1,  1/3")), "free flight: a landing to the standard fills the meter and a toast says so (%s)" % str(main.hud.toast_log))
+	main.start_run()
+	main._end_card()
+	new_round(3202, 5)
+	main.state = MAIN.APPROACH
+	land_at(1.5, 0.0)
+	main._finish_round(false)
+	check(CAR.count(SV.data, SC.STANDARD) == 1, "...a miss doesn't")
+	force(SC.NIGHT, SC.CLEAR)
+	main.start_run()
+	main._end_card()
+	new_round(3203, 5)
+	main.state = MAIN.APPROACH
+	land_at(0.3, 0.0)
+	main._finish_round(false)
+	check(CAR.count(SV.data, SC.NIGHT) == 0, "...and a landing type the next rank doesn't test isn't counted")
+	force(SC.STANDARD, SC.CLEAR)
+	main.start_run()
+	main._end_card()
+	new_round(3204, 5)
+	main.mode = MAIN.DAILY
+	main.state = MAIN.APPROACH
+	main.hud.toast_log.clear()
+	land_at(0.3, 0.0)
+	main._finish_round(false)
+	check(CAR.count(SV.data, SC.STANDARD) == 2 and main.hud.toast_log.any(func(t): return t.contains("2/3")), "the daily approach counts the same way (2/3)")
+	main.mode = MAIN.FREE
+	main._show_menu()
+	# the instructor lesson: pay, one landing, counts double
+	SV.data["coins"] = 500
+	var fee32_32: int = main.economy_lesson_fee() if main.has_method("economy_lesson_fee") else load("res://scripts/Economy.gd").lesson_fee(main.career_target())
+	CAR.drop_half(SV.data, SC.STANDARD)
+	SV.data["proficiency"]["counts"]["0"] = 0
+	check(main.start_lesson(SC.STANDARD) and SV.data["coins"] == 500 - fee32_32 and main._lesson_active and main.hud._round.text.begins_with("LESSON"), "a lesson costs its fee up front and flies one landing (fee %d)" % fee32_32)
+	main._end_card()
+	land_at(0.3, 0.0)
+	for i in 900:
+		main.advance(1.0 / 30.0)
+		if main.state == MAIN.OVER:
+			break
+	check(main.state == MAIN.OVER and CAR.count(SV.data, SC.STANDARD) == 2 and main.hud._ov_body.text.contains("counts double"), "...a qualifying landing counts double (%d/3)" % CAR.count(SV.data, SC.STANDARD))
+	check(not main._lesson_active, "(the lesson is used up)")
+	main._death_time = Time.get_ticks_msec() / 1000.0 - 1.0
+	main._continue_from_over()
+	# a lesson you can't pay for
+	SV.data["coins"] = 3
+	main._on_menu_action("career")
+	var info32_32: Dictionary = main.career_info()
+	check(not info32_32["rows"][0]["lesson_ok"] and main.hud._cr_rows[0]["lesson"].disabled, "the lesson button is off when you can't pay (%d coins)" % SV.data["coins"])
+	check(not main.start_lesson(SC.STANDARD) and SV.data["coins"] == 3, "...and a lesson isn't started")
+	# the checkride lock says exactly why, with a practice button for each missing type
+	SV.data = SV.default_data()
+	SV.data["unlock_all"] = true
+	SV.data["proficiency"]["counts"] = {"0": 3, str(SC.SOFT_FIELD): 1}
+	main._on_menu_action("back")
+	main._on_menu_action("career")
+	var inf_32: Dictionary = main.career_info()
+	check(inf_32["status"] == "Needs endorsement:  Soft Field 1/3" and inf_32["lock"] == inf_32["status"] and not inf_32["book"], "locked: the screen says exactly why (%s)" % inf_32["status"])
+	check(main.hud._cr_status.text == inf_32["status"] and main.hud._cr_rows[1]["btn"].kind == "primary" and main.hud._cr_rows[0]["btn"].kind == "secondary" and main.hud._cr_book.disabled, "...and highlights the practice button of the missing type only")
+	SV.data["proficiency"]["counts"] = {}
+	inf_32 = main.career_info()
+	check(inf_32["status"].contains("Normal Landing 0/3") and inf_32["status"].contains("Soft Field 0/3"), "...listing every missing type with its count (%s)" % inf_32["status"])
+	SV.data["proficiency"]["counts"] = {"0": 3, str(SC.SOFT_FIELD): 3}
+	SV.data["coins"] = 5
+	inf_32 = main.career_info()
+	check(inf_32["lock"].begins_with("Examiner fee") and not inf_32["book"], "endorsed but broke: the lock names the fee (%s)" % inf_32["lock"])
+	main._on_menu_action("back")
+	force(-1, -1)
+	main._show_menu()
+	check(nodes() == n32, "(nothing allocated)")
+
+	print("== 33. the economy: rental, ownership, payouts, fees - simulated for two hours ==  [nodes %d]" % nodes())
+	for k in rent_defaults:
+		tn.set(k, rent_defaults[k])
+	var SIM = load("res://scripts/EconomySim.gd")
+	var rc_32: Dictionary = SIM.average("cautious", 8)
+	var rb_32: Dictionary = SIM.average("balanced", 8)
+	var rg_32: Dictionary = SIM.average("greedy", 8)
+	for pair_32 in [["cautious", rc_32], ["balanced", rb_32], ["greedy", rg_32]]:
+		var rr_32: Dictionary = pair_32[1]
+		var bal_32: Array = rr_32["balance"]
+		print("      %s: balance per 10 min %s | Cub %.0f, 172 %.0f, glider %.0f, twin %.0f, jet %.0f (min, -1 = not in 2 h) | rides covered %.1fx" % [pair_32[0], str(bal_32.map(func(b): return int(b))), rr_32["bought"][PL.CUB], rr_32["bought"][PL.C172], rr_32["bought"][PL.GLIDER], rr_32["bought"][PL.TWIN], rr_32["bought"][PL.JET], rr_32["ride_cover"]])
+	check(rb_32["bought"][PL.CUB] >= 0.0 and rb_32["bought"][PL.CUB] <= 15.0 and rc_32["bought"][PL.CUB] <= 20.0, "the Cub is the first purchase, within 15-20 minutes")
+	check(rb_32["bought"][PL.C172] >= 30.0 and rb_32["bought"][PL.C172] <= 110.0 and (rc_32["bought"][PL.C172] < 0.0 or rc_32["bought"][PL.C172] >= 60.0), "owning the 172 is a mid-term goal: about an hour for a balanced pilot (%.0f min), later for a cautious one" % rb_32["bought"][PL.C172])
+	check(rg_32["bought"][PL.JET] < 0.0 and rb_32["bought"][PL.JET] < 0.0 and rc_32["bought"][PL.JET] < 0.0 and rg_32["bought"][PL.TWIN] < 0.0 and rb_32["bought"][PL.TWIN] < 0.0, "the twin and the jet are long-term: nobody owns them within two hours")
+	var spend_ok := true
+	for rr_32 in [rc_32, rb_32]:
+		spend_ok = spend_ok and (rr_32["rental"] + rr_32["damage"] + rr_32["fees"] + rr_32["lessons"]) >= 0.25 * rr_32["earned"]
+	check(spend_ok and (rg_32["rental"] + rg_32["damage"] + rg_32["fees"]) >= 0.1 * rg_32["earned"], "coins are spent regularly: rentals, damage, lessons and examiner fees take a real share of what is earned")
+	check(rc_32["ride_cover"] >= 1.3 and rb_32["ride_cover"] >= 1.3 and rg_32["ride_cover"] >= 1.3, "the examiner's fee is affordable when the checkride is booked (cover %.1fx / %.1fx / %.1fx)" % [rc_32["ride_cover"], rb_32["ride_cover"], rg_32["ride_cover"]])
+	var typical33_32: int = SIM.pot_for([2, 2])
+	var big33: int = SIM.pot_for([0, 1, 0, 2, 0, 1])
+	check(big33 >= 8 * typical33_32, "a big push-your-luck run feels big: %d coins against %d for a routine two-landing run" % [big33, typical33_32])
+	for k in rent_defaults:
+		tn.set(k, 0)
+	check(nodes() == n32, "(nothing allocated)")
 
 	print("== 9. debug flags / frame time ==  [nodes %d]" % nodes())
 	DF.parse(["nofx=smoke,shake", "perf", "round=4", "seed=9", "bogus"] as Array[String])

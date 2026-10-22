@@ -148,3 +148,9 @@ wide framing showing the plane and the whole runway; the zoom tightens from ther
 - **Pause**: a button in the top-right corner. Resume / Settings (sound and music volume, saved) / Quit. Quitting a free-flight run
   forfeits the pot (confirmation: "Quit and lose 840 coins?"); quitting a checkride counts as a fail (confirmation first). The game
   also pauses itself when the app loses focus. `?screen=choice|pause` shows those screens.
+
+## Career, free flight and the flight-school economy
+
+- Every landing that meets the current standard for its landing type fills that type's proficiency meter, in free flight, practice and the daily approach (a toast says "Short Field +1, 2/3"). Free flight favours the landing types you are training for.
+- Aircraft: rent per flight, or buy to end the rental; a crash in a rented one adds a damage fee. Instructor lessons count double. The checkride lock on the career screen says exactly which types are missing. See `docs/economy.md` (with the two-hour simulation: `godot --headless --path . --script res://tools/economy_sim.gd`).
+- Ground layers (runway, paint, edge stripes, aim marks, wires, road) each have their own height, 0.02 apart, and the camera's depth range hugs the view, so nothing z-fights; `docs/screens/ground/` shows every scenario, weather and time of day.

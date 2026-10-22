@@ -8,7 +8,7 @@ extends RefCounted
 ## 2 = this one (eight ranks, proficiency meters, pink slips). A document from a NEWER build is
 ## kept as it is (unknown keys survive), and anything unreadable falls back to a fresh save instead of crashing.
 
-const VERSION := 2
+const VERSION := 3
 ## Version 1 had six ranks (Student, Private, Instrument, Commercial, CFI, Airline); where they sit on the eight-rank ladder.
 const RANK_MAP_V1: Array[int] = [0, 3, 4, 5, 6, 7]
 const OLD_PATH := "user://greaser.cfg"
@@ -39,7 +39,7 @@ static func default_data() -> Dictionary:
 		"gear": 0,               # equipped pilot gear (index into Cosmetics.GEAR)
 		"owned_paint": [0],
 		"owned_gear": [0],
-		"owned_planes": [],      # aircraft bought with coins (ranks unlock the others)
+		"owned_planes": [],      # aircraft bought with coins (they have no rental fee); a rank unlocks the others to rent
 		"settings": {"sound": 1.0, "music": 0.5},
 		"daily": {"day": -1, "best": 0, "tries": 0},   # the daily approach: which day, best score, attempts that day
 	}
@@ -132,6 +132,8 @@ static func migrate(d: Dictionary) -> Dictionary:
 		for item in opin:
 			if int(item) >= 0 and int(item) <= 4 and not op.has(int(item)):
 				op.append(int(item))
+	if v < 3 and not op.has(0):
+		op.append(0)           # (before rentals every pilot had the Cub: keep it)
 	out["owned_planes"] = op
 	var st: Dictionary = {"sound": 1.0, "music": 0.5}
 	var stin = d.get("settings", {})

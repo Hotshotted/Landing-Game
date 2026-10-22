@@ -178,19 +178,34 @@ var proficiency_needed := 3
 ## Landings in a checkride (drawn at random from the rank's types).
 var ride_landings := 3
 ## Examiner fee in coins for the checkride to rank r: exam_fee_base x exam_fee_growth ^ (r - 1). Failing loses it.
-var exam_fee_base := 40.0
-var exam_fee_growth := 1.45
+var exam_fee_base := 100.0
+var exam_fee_growth := 1.5
 
 # ---------- Pot, cash-out and aircraft prices ----------
 ## Push-your-luck free flight: the pot (coins earned in the run, not banked yet) is multiplied by 1 + pot_step x (landings survived)
 ## and is lost with a crash; CASH OUT banks it with a count-up of this many seconds.
-var pot_step := 0.2
+var pot_step := 0.3
 var cashout_seconds := 1.8
-## Aircraft bought with coins (a rank also unlocks them; the Cub is free).
-var price_172 := 200
-var price_glider := 450
-var price_twin := 600
-var price_jet := 1200
+## Aircraft bought with coins. Owning one ends its rental fee for good. (A rank unlocks aircraft for checkrides and renting.)
+var price_cub := 100
+var price_172 := 1500
+var price_glider := 2000
+var price_twin := 3500
+var price_jet := 7000
+
+# ---------- Flight school: rental, damage, lessons ----------
+## Renting an aircraft you don't own costs this per free-flight run (the Cub is waived when you can't pay it, so nobody gets stuck).
+var rent_cub := 10
+var rent_172 := 25
+var rent_glider := 35
+var rent_twin := 60
+var rent_jet := 150
+## A crash in a rented aircraft adds a damage fee: rent x this.
+var damage_mult := 2.0
+## An instructor lesson (one practice landing with the instructor aboard that counts double) costs lesson_fee_base x growth ^ (rank being trained for - 1).
+var lesson_fee_base := 35.0
+var lesson_fee_growth := 1.35
+var lesson_credit := 2
 
 # ---------- Rollout ----------
 ## Braking per surface (units/s^2): asphalt, grass, dirt.
@@ -291,11 +306,11 @@ var go_around_climb := 10.0
 
 # ---------- Coins, daily approach, ad stubs ----------
 ## Coins per landing by grade (Greaser! .. Hard), times the streak multiplier. They only buy paint and pilot gear.
-var coins_greaser := 20
-var coins_smooth := 12
-var coins_good := 8
-var coins_firm := 4
-var coins_hard := 2
+var coins_greaser := 80
+var coins_smooth := 48
+var coins_good := 32
+var coins_firm := 16
+var coins_hard := 8
 ## The daily approach is always flown at this difficulty round.
 var daily_round := 8
 ## The fake "Ad playing" screen lasts this long (seconds). Real ad SDKs replace Ads.gd's stubs later.

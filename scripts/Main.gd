@@ -62,6 +62,9 @@ var strikes := 0
 var pot := 0                    # free flight: coins earned this run and not banked yet (lost with a crash)
 var banked := 0                 # coins this run banked by cashing out
 var pot_lost := 0               # the pot that went down with the aircraft
+var rental_paid := 0            # this run's rental fee
+var damage_paid := 0            # this run's damage fee (a rented aircraft crashed)
+var _lesson_active := false     # the practice landing in progress is a paid instructor lesson (counts double)
 var _next_pick := Vector2i(-1, -1)   # the next approach's scenario / weather, chosen when the choice screen shows its hint
 var _cash_t := 0.0
 var _next_round := -1           # the round number _next_pick is for
@@ -124,8 +127,8 @@ func _ready() -> void:
 	add_child(camera)
 	camera.projection = Camera3D.PROJECTION_ORTHOGONAL
 	camera.keep_aspect = Camera3D.KEEP_WIDTH
-	camera.near = 0.1
-	camera.far = 400.0
+	camera.near = 3.0
+	camera.far = 160.0
 	camera.size = Tuning.view_width_low
 	_setup_environment()
 	if DebugFlags.scenario_forced() >= 0:
@@ -169,7 +172,7 @@ func _ready() -> void:
 	if DebugFlags.plane_forced() >= 0:
 		plane_id = DebugFlags.plane_forced()
 	round_no = DebugFlags.first_round() - 1
-	hud.set_plane_choice(plane_id)
+	_refresh_selector()
 	_apply_cosmetics()
 	_begin_round(false)
 	_snap_camera()
@@ -279,8 +282,13 @@ func _open_debug_screen() -> void:
 		"pause":
 			hud.show_pause()
 
+## The aircraft selector: the aircraft and what it costs to fly it.
+func _refresh_selector() -> void:
+	hud.set_plane_choice(plane_id, Economy.rent_text(Save.data, plane_id), Economy.owns(Save.data, plane_id))
+
 func _show_menu() -> void:
 	state = MENU
+	_refresh_selector()
 	_set_base_tension(0.0)
 	hud.hide_card()
 	mode = FREE
@@ -308,6 +316,16 @@ func start_run() -> void:
 	hud.set_ad_button("", false)
 	if not available_planes().has(plane_id):
 		select_plane(available_planes()[0])      # (e.g. after a reset: fly something you have)
+	rental_paid = 0
+	damage_paid = 0
+	if not Economy.can_rent(Save.data, plane_id):
+		var asked := plane_id
+		select_plane(_cheapest_flyable())
+		hud.toast("Can't pay the %s rental: flying the %s" % [Planes.NAMES[asked], Planes.NAMES[plane_id]], Color(1.0, 0.7, 0.4))
+	rental_paid = Economy.rental_due(Save.data, plane_id)
+	if rental_paid > 0:
+		Save.add("coins", -rental_paid)
+		hud.toast("Rental  -%d coins" % rental_paid, Color(1.0, 0.85, 0.4))
 	score = 0
 	strikes = 0
 	landings = 0
@@ -330,13 +348,33 @@ func start_run() -> void:
 	_begin_round()
 	_snap_camera()
 
+## The aircraft you can fly that costs least to rent (the Cub's fee is waived when you are broke, so there is always one).
+func _cheapest_flyable() -> int:
+	var best_id := -1
+	for p in available_planes():
+		if Economy.can_rent(Save.data, p) and (best_id < 0 or Economy.rental_due(Save.data, p) < Economy.rental_due(Save.data, best_id)):
+			best_id = p
+	return best_id if best_id >= 0 else available_planes()[0]
+
 ## Choose the scenario and weather, lay out the next runway and put the plane on its approach. `card` shows the title card
 ## first (the plane waits); tests pass false.
 ## The scenario and weather of free-flight approach `rn` (what the rank and the aircraft allow; harder as the run goes on).
 func _pick_free(rn: int) -> Vector2i:
-	var scn_ok := _intersect(Planes.scenarios(plane_id), Career.scenarios(Save.data["rank"], Save.data["unlock_all"]))
+	var tgt := career_target()
+	var open: Array[int] = Career.scenarios(Save.data["rank"], Save.data["unlock_all"])
+	var train: Array[int] = Career.types_for(mini(tgt, Career.max_rank()))
+	for t in train:
+		if not open.has(t):
+			open.append(t)                  # (the landing types you are training for are flown in free flight too)
+	var scn_ok := _intersect(Planes.scenarios(plane_id), open)
 	var wx_ok := _intersect(Planes.weather(plane_id), Career.weather(Save.data["rank"], Save.data["unlock_all"]))
-	return Scenarios.pick(rn, rng, _last_scenario, scn_ok, wx_ok)
+	# favour the types whose proficiency meter isn't full, else the rank's own types: normal play progresses the career
+	var prefer: Array[int] = []
+	if int(Save.data["rank"]) < Career.max_rank():
+		prefer = Career.missing(Save.data, tgt)
+	if prefer.is_empty():
+		prefer = train
+	return Scenarios.pick(rn, rng, _last_scenario, scn_ok, wx_ok, prefer)
 
 func _begin_round(card: bool = true) -> void:
 	var entry: Dictionary = {}
@@ -371,6 +409,9 @@ func _begin_round(card: bool = true) -> void:
 	aircraft.set_floats(scenario == Scenarios.WATER)
 	aircraft.set_night(airfield.night)
 	aircraft.reset(0.0, airfield.start_altitude)
+	if DebugFlags.closeup_enabled():       # (screenshots: start just before the threshold, low, to look at the runway)
+		aircraft.x = airfield.thr - 10.0
+		aircraft.y = airfield.ground_y(aircraft.x) + 5.0
 	_start_x = aircraft.x
 	_start_agl = aircraft.agl()
 	_standard = Standards.for_type(scenario, _tier())
@@ -580,7 +621,7 @@ func select_plane(id: int, remember: bool = true) -> void:
 	if remember:
 		Save.data["plane"] = plane_id
 	aircraft.apply_plane(plane_id)
-	hud.set_plane_choice(plane_id)
+	_refresh_selector()
 	hud.set_strikes(0, 0) if mode == FREE else hud.set_strikes(strikes, strikes_max())
 
 ## The aircraft you may pick: the ones your rank has unlocked.
@@ -976,6 +1017,12 @@ func _crash(reason: String) -> void:
 		Save.add("coins", -_coins_award)
 		run_coins -= _coins_award
 		_coins_award = 0
+	if mode == FREE:
+		var dmg := Economy.damage_due(Save.data, plane_id)
+		if dmg > 0:
+			Save.add("coins", -dmg)
+			damage_paid += dmg
+			lost_text += "\nDamage fee: -%d coins" % dmg
 	_awarded = 0
 	hud.set_strikes(0, 0) if mode == FREE else hud.set_strikes(strikes, strikes_max())
 	_set_base_tension(0.0)
@@ -1002,6 +1049,29 @@ func _leave_crash() -> void:
 	hud.hide_pot_lost()
 	_finish_round(strikes >= strikes_max())
 
+## A landing that met this rank's standard fills its landing type's proficiency meter, in free flight, practice and the daily
+## approach alike. A toast says so ("Short Field +1, 2/3"). `double`: the instructor lesson counts more.
+func _credit_proficiency(lesson: bool) -> Dictionary:
+	var rank := int(Save.data["rank"])
+	if rank >= Career.max_rank():
+		return {}
+	var tgt := career_target()
+	if not Career.types_for(tgt).has(scenario):
+		return {}
+	var before := Career.count(Save.data, scenario)
+	var n := Career.add_practice(Save.data, scenario, int(Tuning.lesson_credit) if lesson else 1)
+	var name_t: String = Scenarios.NAMES[scenario].capitalize()
+	var text := "%s  +%d,  %d/%d" % [name_t, n - before, n, Career.needed()] if n > before else "%s  %d/%d (full)" % [name_t, n, Career.needed()]
+	if lesson:
+		text += "  (lesson x2)"
+	hud.toast(text, Color(0.55, 1.0, 0.65))
+	if before < Career.needed() and n >= Career.needed() and Career.endorsed(Save.data, tgt):
+		hud.toast("Endorsed! Book the %s checkride in CAREER" % Career.rank_name(tgt), Color(1.0, 0.85, 0.35))
+		sfx.play(Sfx.CHIME, 1.3, 0.0)
+	Save.store()
+	_refresh_menu_buttons()
+	return {"n": n, "gain": n - before}
+
 ## The landing (or crash) is over: fade out, then a new approach (or the end of the run).
 func _finish_round(over: bool) -> void:
 	if state != CRASH and not last_result.is_empty() and _graded:
@@ -1009,6 +1079,8 @@ func _finish_round(over: bool) -> void:
 		if mode != RIDE:
 			if last_verdict["pass"]:
 				hud.flash_warning("STANDARD MET", Color(0.5, 1.0, 0.6))
+				if mode != PRACTICE:
+					_credit_proficiency(false)          # (practice credits in its result screen, with the lesson bonus)
 			else:
 				hud.flash_warning("STANDARD MISSED: " + str(last_verdict["fails"][0]), Color(1.0, 0.55, 0.4))
 		elif not last_verdict["pass"]:
@@ -1032,6 +1104,15 @@ func _finish_round(over: bool) -> void:
 	state = FADE
 	_timer = 0.0
 	hud.fade_to(1.0)
+
+## "Rental -20   Damage -40" for the run-over screen ("" when there were none).
+func _fees_text() -> String:
+	var parts: Array[String] = []
+	if rental_paid > 0:
+		parts.append("Rental  -%d" % rental_paid)
+	if damage_paid > 0:
+		parts.append("Damage  -%d" % damage_paid)
+	return "   ".join(parts)
 
 func _show_over() -> void:
 	state = OVER
@@ -1057,6 +1138,7 @@ func _show_over() -> void:
 	_refresh_menu_buttons()
 	hud.fade_to(0.0)
 	hud.clear_popup()
+	hud.over_extra = _fees_text()
 	hud.show_over(score, best, landings, new_best, best_streak, banked, pot_lost)
 	_refresh_ad_button()
 
@@ -1125,6 +1207,10 @@ func _apply_camera() -> void:
 	if sh > 0.001:
 		ox = rng.randf_range(-1.0, 1.0) * sh * Tuning.shake_size
 		oy = rng.randf_range(-1.0, 1.0) * sh * Tuning.shake_size
+	# a tight depth range (just what the view can see) keeps the ground layers apart even on a 16-bit depth buffer
+	var span := _cam_w * _aspect() * 0.5 * sin(tilt) + 70.0
+	camera.near = maxf(dist - span, 1.0)
+	camera.far = dist + span
 	camera.position = Vector3(_cam_x + ox, _cam_y + oy + dist * sin(tilt), dist * cos(tilt))
 	camera.rotation = Vector3(-tilt, 0.0, 0.0)
 
@@ -1308,11 +1394,15 @@ func career_info() -> Dictionary:
 	var top := rank >= Career.max_rank()
 	var types := Career.types_for(tgt) if not top else Career.types_for(Career.max_rank())
 	var endorsed := (not top) and Career.endorsed(Save.data, tgt)
+	var lesson_fee := Economy.lesson_fee(tgt)
 	var rows: Array[Dictionary] = []
 	for ty in types:
-		rows.append({"name": Scenarios.NAMES[ty].capitalize(), "count": Career.count(Save.data, ty) if not top else Career.needed(), "needed": Career.needed(), "type": ty})
+		var cnt := Career.count(Save.data, ty) if not top else Career.needed()
+		rows.append({"name": Scenarios.NAMES[ty].capitalize(), "count": cnt, "needed": Career.needed(), "type": ty,
+			"missing": cnt < Career.needed(), "lesson_fee": lesson_fee, "lesson_ok": (not top) and cnt < Career.needed() and int(Save.data["coins"]) >= lesson_fee})
 	var speech := ""
 	var status := ""
+	var lock := ""
 	var book_text := "BOOK CHECKRIDE"
 	var can_book := false
 	if top:
@@ -1322,17 +1412,26 @@ func career_info() -> Dictionary:
 	else:
 		var miss := Career.missing(Save.data, tgt)
 		var fee := Career.fee(tgt, bool(Save.data["fee_halved"]))
+		book_text = "BOOK CHECKRIDE   %d COINS" % fee
 		if endorsed:
 			speech = "\"Well flown, Whiskers. I've signed your endorsement for the %s checkride. The examiner will draw %d landing types.\"" % [Career.rank_name(tgt), mini(int(Tuning.ride_landings), types.size())]
 			status = "Examiner fee  %d coins%s    You have  %d" % [fee, " (halved!)" if bool(Save.data["fee_halved"]) else "", int(Save.data["coins"])]
-			book_text = "BOOK CHECKRIDE   %d COINS" % fee
 			can_book = int(Save.data["coins"]) >= fee
+			if not can_book:
+				lock = "Examiner fee %d coins: you have %d. Fly more, or take it from the pot." % [fee, int(Save.data["coins"])]
 		else:
 			speech = "\"Practise each landing to the %s standard %d times. Still to do: %s.\"" % [Career.rank_name(tgt), Career.needed(), _types_text(miss)]
-			status = "Training for %s  -  %s" % [Career.rank_name(tgt), " / ".join(Career.unlock_lines(tgt))]
-			book_text = "BOOK CHECKRIDE   %d COINS" % fee
+			status = "Needs endorsement:  %s" % _progress_text(miss)
+			lock = status
 	return {"body": "%s PILOT" % Career.rank_name(rank), "speech": speech, "endorsed": endorsed, "status": status, "rows": rows,
-		"practice": CAREER_PRACTICE, "book_text": book_text, "book": can_book and CAREER_BOOKING}
+		"practice": CAREER_PRACTICE, "book_text": book_text, "book": can_book and CAREER_BOOKING, "lock": lock}
+
+## "Short Field 1/3, Soft Field 0/3" for the types still to fill.
+func _progress_text(types: Array[int]) -> String:
+	var parts: Array[String] = []
+	for t in types:
+		parts.append("%s %d/%d" % [Scenarios.NAMES[t].capitalize(), Career.count(Save.data, t), Career.needed()])
+	return ", ".join(parts)
 
 const CAREER_PRACTICE := true
 const CAREER_BOOKING := true
@@ -1362,6 +1461,13 @@ func _on_menu_action(id: String) -> void:
 				_run_start_ms = Time.get_ticks_msec()
 				_paused_total_ms = 0
 				start_practice(int(rows[ix]["type"]))
+		_ when id.begins_with("lesson:"):
+			var lrows: Array = career_info()["rows"]
+			var lix := int(id.get_slice(":", 1))
+			if lix >= 0 and lix < lrows.size():
+				_run_start_ms = Time.get_ticks_msec()
+				_paused_total_ms = 0
+				start_lesson(int(lrows[lix]["type"]))
 		"logbook":
 			hud.show_logbook(logbook_text(), Save.data["airports"], _slips_for_logbook())
 		"daily":
@@ -1498,6 +1604,7 @@ func _show_ride_result() -> void:
 
 func _redraw_over() -> void:
 	if _over_kind == "run":
+		hud.over_extra = _fees_text()
 		hud.show_over(score, best, landings, false, best_streak, banked, pot_lost)
 	elif not _notice.is_empty():
 		hud.show_notice(_notice["title"], _notice["body"], _notice["prompt"], _notice["color"])
@@ -1540,7 +1647,7 @@ func _record_landing(grade: int) -> void:
 func debug_unlock_all(on: bool) -> void:
 	Save.data["unlock_all"] = on
 	Save.store()
-	hud.set_plane_choice(plane_id)
+	_refresh_selector()
 	_refresh_menu_buttons()
 
 func debug_promote() -> void:
@@ -1599,6 +1706,7 @@ func _on_debug_action(id: String) -> void:
 ## One practice landing of `scn`, flown to the standard of the rank being trained for. Meeting the standard fills a proficiency
 ## pip; a miss or a crash doesn't count.
 func start_practice(scn: int) -> void:
+	_lesson_active = false
 	mode = PRACTICE
 	_over_kind = "practice"
 	practice_entry = Career.make_entry(scn, career_target(), _career_rng)
@@ -1626,6 +1734,21 @@ func start_practice(scn: int) -> void:
 	_begin_round()
 	_snap_camera()
 
+## An instructor lesson: pay the fee, then fly one practice landing of `scn` that counts double if it meets the standard.
+func start_lesson(scn: int) -> bool:
+	var fee := Economy.lesson_fee(career_target())
+	if int(Save.data["coins"]) < fee or int(Save.data["rank"]) >= Career.max_rank() or Career.count(Save.data, scn) >= Career.needed():
+		hud.flash_warning("Not enough coins for the lesson", Color(1.0, 0.5, 0.4))
+		sfx.play(Sfx.DENY, 1.0, -6.0)
+		return false
+	Save.add("coins", -fee)
+	Save.store()
+	start_practice(scn)
+	_lesson_active = true
+	hud.set_round_text("LESSON  x2")
+	hud.toast("Lesson  -%d coins: a qualifying landing counts double" % fee, Color(1.0, 0.85, 0.4))
+	return true
+
 func _show_practice_result() -> void:
 	select_plane(_saved_plane, false)
 	hud.fade_to(0.0)
@@ -1644,8 +1767,9 @@ func _show_practice_result() -> void:
 		if top:
 			body = "%s\nTo the %s standard." % [name_t, Career.rank_name(tgt)]
 		else:
-			var n := Career.add_practice(Save.data, scn)
-			body = "%s\nProficiency  %d / %d" % [name_t, n, Career.needed()]
+			var cr := _credit_proficiency(_lesson_active)
+			var n := int(cr.get("n", Career.count(Save.data, scn)))
+			body = "%s\nProficiency  %d / %d%s" % [name_t, n, Career.needed(), "   (instructor lesson: counts double)" if _lesson_active else ""]
 			if Career.endorsed(Save.data, tgt):
 				body += "\n\nEvery landing type is ready: the instructor signs your endorsement for the %s checkride!" % Career.rank_name(tgt)
 				sfx.play(Sfx.CHIME, 1.3, 0.0)
@@ -1653,6 +1777,7 @@ func _show_practice_result() -> void:
 		title = "NOT TO STANDARD"
 		var why: Array = verdict["fails"]
 		body = "%s\n%s\n\nIt doesn't count." % [name_t, "\n".join(why.slice(0, 3))]
+	_lesson_active = false
 	Save.store()
 	_refresh_menu_buttons()
 	_show_notice(title, body, "TAP FOR THE CAREER SCREEN", color)
@@ -1726,9 +1851,21 @@ func _on_hangar_pick(kind: String, idx: int) -> void:
 		return
 	if kind == "plane":
 		if not available_planes().has(idx):
-			if not Cosmetics.buy_plane(Save.data, idx):
-				hud.flash_warning("Not enough coins", Color(1.0, 0.5, 0.4))
-				return
+			hud.flash_warning("Locked: not unlocked by your rank yet. Buy it to own it.", Color(1.0, 0.5, 0.4))
+			return
+		select_plane(idx)
+		Save.store()
+		_show_hangar()
+		return
+	if kind == "plane_buy":
+		if Economy.owns(Save.data, idx):
+			return
+		if not Cosmetics.buy_plane(Save.data, idx):
+			hud.flash_warning("Not enough coins", Color(1.0, 0.5, 0.4))
+			sfx.play(Sfx.DENY, 1.0, -6.0)
+			return
+		sfx.play(Sfx.FANFARE, 1.0, -8.0)
+		hud.toast("%s is yours: no more rental fees" % Planes.NAMES[idx], Color(1.0, 0.85, 0.35))
 		select_plane(idx)
 		Save.store()
 		_show_hangar()
@@ -1761,6 +1898,7 @@ func _finish_ad() -> void:
 			Save.store()
 			state = OVER
 			_death_time = Time.get_ticks_msec() / 1000.0
+			hud.over_extra = _fees_text()
 			hud.show_over(score, best, landings, false, best_streak, banked, pot_lost)
 			_refresh_ad_button()
 		"fee":

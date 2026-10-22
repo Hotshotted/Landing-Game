@@ -100,10 +100,10 @@ static func weather(id: int) -> Array[int]:
 static func offers(id: int, scn: int) -> bool:
 	return (SCENARIOS[clampi(id, 0, COUNT - 1)] as Array).has(scn)
 
-## Coins to buy an aircraft (0 for the Cub, which every pilot has).
+## Coins to buy an aircraft (which ends its rental fee).
 static func price(id: int) -> int:
 	match clampi(id, 0, COUNT - 1):
-		CUB: return 0
+		CUB: return int(Tuning.price_cub)
 		C172: return int(Tuning.price_172)
 		TWIN: return int(Tuning.price_twin)
 		GLIDER: return int(Tuning.price_glider)

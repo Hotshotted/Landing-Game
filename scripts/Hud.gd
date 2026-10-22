@@ -65,6 +65,7 @@ signal choice(kind: String)             # "cashout" or "keep" (the choice screen
 signal pause_action(id: String)         # "pause", "resume", "settings", "settings_back", "quit", "quit_yes", "quit_no"
 signal volume_changed(kind: String, value: float)
 var _hangar_planes: Array[UiButton] = []
+var _hangar_buy: Array[UiButton] = []
 var _pot: Label
 var _choice_root: Control
 var _ch_title: Label
@@ -98,6 +99,8 @@ var _ad_on := false
 var _sel_row: Control
 var _sel_name: Label
 var _sel_info: Label
+var _sel_rent: Label
+var over_extra := ""                    # extra lines for the run-over screen (rental and damage fees)
 var _sel_icon: UiIcon
 var _sel_prev: UiButton
 var _sel_next: UiButton
@@ -367,7 +370,7 @@ func _ready() -> void:
 	sel_card.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	sel_card.add_theme_stylebox_override("panel", Style.box(Color(Style.SURFACE_DARK, 0.88), Style.LINE, Style.R_L, 3))
 	_sel_row.add_child(sel_card)
-	_place(sel_card, 0, 0.52, 16, -10, 1048, 290)
+	_place(sel_card, 0, 0.52, 16, -10, 1048, 346)
 	_sel_icon = UiIcon.new()
 	_sel_icon.glyph = "cub"
 	_sel_row.add_child(_sel_icon)
@@ -376,6 +379,10 @@ func _ready() -> void:
 	remove_child(_sel_name)
 	_sel_row.add_child(_sel_name)
 	_place(_sel_name, 0, 0.52, 160, 34, 760, 100)
+	_sel_rent = _label(34, HORIZONTAL_ALIGNMENT_CENTER)
+	remove_child(_sel_rent)
+	_sel_row.add_child(_sel_rent)
+	_place(_sel_rent, 0, 0.52, 60, 284, 960, 48)
 	_sel_info = _label(32, HORIZONTAL_ALIGNMENT_CENTER)
 	remove_child(_sel_info)
 	_sel_row.add_child(_sel_info)
@@ -567,9 +574,11 @@ func _build_career() -> void:
 	_cr_status = _label(30, HORIZONTAL_ALIGNMENT_CENTER)
 	remove_child(_cr_status)
 	_career_root.add_child(_cr_status)
-	_place(_cr_status, 0, 0, 30, 715, 1020, 50)
+	_place(_cr_status, 0, 0, 30, 706, 1020, 96)
+	_cr_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_cr_status.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	for i in MAX_TYPE_ROWS:
-		var y := 780.0 + float(i) * 86.0
+		var y := 815.0 + float(i) * 86.0
 		var row := {}
 		var nm := _label(36, HORIZONTAL_ALIGNMENT_LEFT)
 		remove_child(nm)
@@ -582,7 +591,7 @@ func _build_career() -> void:
 			var pip := ColorRect.new()
 			pip.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			_career_root.add_child(pip)
-			_place(pip, 0, 0, 515.0 + float(k) * 46.0, y + 15.0, 36, 40)
+			_place(pip, 0, 0, 440.0 + float(k) * 46.0, y + 15.0, 36, 40)
 			pips.append(pip)
 		row["pips"] = pips
 		var b := UiButton.new()
@@ -592,8 +601,19 @@ func _build_career() -> void:
 		var idx := i
 		b.pressed.connect(func(): menu_action.emit("practice:%d" % idx))
 		_career_root.add_child(b)
-		_place(b, 0, 0, 770, y, 280, 80)
+		_place(b, 0, 0, 640, y, 220, 80)
+		b.font_px = 24
 		row["btn"] = b
+		var lb := UiButton.new()
+		lb.text = "LESSON"
+		lb.font_px = 24
+		lb.kind = "gold"
+		lb.icon = "cap"
+		var lidx := i
+		lb.pressed.connect(func(): menu_action.emit("lesson:%d" % lidx))
+		_career_root.add_child(lb)
+		_place(lb, 0, 0, 870, y, 190, 80)
+		row["lesson"] = lb
 		_cr_rows.append(row)
 	_cr_book = UiButton.new()
 	_cr_book.font_px = 34
@@ -627,12 +647,14 @@ func show_career(info: Dictionary) -> void:
 	var sp: StyleBoxFlat = _cr_speech_panel.get_theme_stylebox("panel")
 	sp.border_color = Color(0.2, 0.6, 0.3) if bool(info["endorsed"]) else Color(0.5, 0.4, 0.25)
 	_cr_status.text = str(info["status"])
+	_cr_status.add_theme_color_override("font_color", Style.WARNING if str(info.get("lock", "")) != "" else Color.WHITE)
 	var rows: Array = info["rows"]
 	for i in MAX_TYPE_ROWS:
 		var row: Dictionary = _cr_rows[i]
 		var on := i < rows.size()
 		(row["name"] as Label).visible = on
 		(row["btn"] as UiButton).visible = on
+		(row["lesson"] as UiButton).visible = on
 		for pip in row["pips"]:
 			(pip as ColorRect).visible = false
 		if not on:
@@ -640,6 +662,9 @@ func show_career(info: Dictionary) -> void:
 		var r: Dictionary = rows[i]
 		(row["name"] as Label).text = str(r["name"])
 		(row["btn"] as UiButton).disabled = not bool(info["practice"])
+		(row["btn"] as UiButton).kind = "primary" if bool(r.get("missing", false)) else "secondary"
+		(row["lesson"] as UiButton).disabled = not bool(r.get("lesson_ok", false))
+		(row["lesson"] as UiButton).text = "LESSON %dc" % int(r.get("lesson_fee", 0))
 		var needed := mini(int(r["needed"]), MAX_PIPS)
 		for k in needed:
 			var pip: ColorRect = row["pips"][k]
@@ -1029,20 +1054,20 @@ func _build_hangar() -> void:
 	remove_child(h1)
 	_hangar_root.add_child(h1)
 	h1.text = "PAINT"
-	_place(h1, 0, 0, 0, 500, 1080, 50)
+	_place(h1, 0, 0, 0, 495, 1080, 44)
 	h1.anchor_right = 1.0
 	h1.offset_right = 0
 	for i in Cosmetics.PAINTS.size():
-		_hangar_paint.append(_hangar_button("paint", i, 560 + (i / 2) * 110))
+		_hangar_paint.append(_hangar_button("paint", i, 545 + (i / 2) * 84))
 	var h2 := _label(36, HORIZONTAL_ALIGNMENT_CENTER)
 	remove_child(h2)
 	_hangar_root.add_child(h2)
 	h2.text = "WHISKERS' GEAR"
-	_place(h2, 0, 0, 0, 910, 1080, 50)
+	_place(h2, 0, 0, 0, 805, 1080, 44)
 	h2.anchor_right = 1.0
 	h2.offset_right = 0
 	for i in Cosmetics.GEAR.size():
-		_hangar_gear.append(_hangar_button("gear", i, 970 + (i / 2) * 110))
+		_hangar_gear.append(_hangar_button("gear", i, 850 + (i / 2) * 84))
 	var back := UiButton.new()
 	back.text = "BACK"
 	back.font_px = 44
@@ -1054,19 +1079,22 @@ func _build_hangar() -> void:
 	remove_child(h3)
 	_hangar_root.add_child(h3)
 	h3.text = "AIRCRAFT"
-	_place(h3, 0, 0, 0, 1310, 1080, 50)
+	_place(h3, 0, 0, 0, 1112, 1080, 44)
 	h3.anchor_right = 1.0
 	h3.offset_right = 0
 	for i in Planes.COUNT:
-		_hangar_planes.append(_hangar_button("plane", i, 1370 + (i / 2) * 110))
+		_hangar_planes.append(_hangar_button("plane", i, 1160.0 + float(i) * 90.0, 30.0, 600.0))
+		var bb := _hangar_button("plane_buy", i, 1160.0 + float(i) * 90.0, 650.0, 400.0)
+		bb.kind = "gold"
+		_hangar_buy.append(bb)
 
-func _hangar_button(kind: String, idx: int, y: float) -> UiButton:
+func _hangar_button(kind: String, idx: int, y: float, x: float = -1.0, w: float = 500.0) -> UiButton:
 	var b := UiButton.new()
-	b.font_px = 32
-	b.icon = "paint" if kind == "paint" else ("cap" if kind == "gear" else "")
+	b.font_px = 30
+	b.icon = "paint" if kind == "paint" else ("cap" if kind == "gear" else ("coin" if kind == "plane_buy" else ""))
 	b.pressed.connect(func(): hangar_pick.emit(kind, idx))
 	_hangar_root.add_child(b)
-	_place(b, 0, 0, 30 + (idx % 2) * 520, y, 500, 96)
+	_place(b, 0, 0, (30.0 + float(idx % 2) * 520.0) if x < 0.0 else x, y, w, 80)
 	return b
 
 ## Refresh the hangar's buttons from the save: "[NAME]" equipped, "NAME" owned, "NAME  150c" for sale.
@@ -1076,7 +1104,7 @@ func show_hangar(data: Dictionary, planes_avail: Array = [], plane_now: int = -1
 	_ov_title.text = "HANGAR"
 	_ov_title.add_theme_color_override("font_color", Color(0.7, 0.9, 1.0))
 	_ov_title.add_theme_font_size_override("font_size", 110)
-	_ov_body.text = "Coins  %d\nPaint and gear are just for looks." % int(data["coins"])
+	_ov_body.text = "Coins  %d\nOwning an aircraft ends its rental fee." % int(data["coins"])
 	_ov_prompt.text = ""
 	for i in _hangar_paint.size():
 		var p: Dictionary = Cosmetics.PAINTS[i]
@@ -1089,9 +1117,24 @@ func show_hangar(data: Dictionary, planes_avail: Array = [], plane_now: int = -1
 		_hangar_gear[i].accent = int(data["gear"]) == i
 	for i in _hangar_planes.size():
 		var pn: String = Planes.NAMES[i]
-		_hangar_planes[i].text = _hangar_label(pn, Planes.price(i), planes_avail.has(i), plane_now == i)
-		_hangar_planes[i].accent = plane_now == i
+		var owned: bool = (data["owned_planes"] as Array).has(i)
+		var avail := planes_avail.has(i)
+		var eq := plane_now == i
+		var line := ("[%s]" % pn) if eq else pn
+		if owned:
+			line += "   owned" if not eq else ""
+		elif avail:
+			line += "   rent %d" % Economy.rent(i)
+		else:
+			line += "   locked"
+		_hangar_planes[i].text = line
+		_hangar_planes[i].accent = eq
+		_hangar_planes[i].disabled = not avail
 		_hangar_planes[i].icon = Icons.aircraft(i)
+		var price := Planes.price(i)
+		_hangar_buy[i].text = "OWNED" if owned else "BUY  %d" % price
+		_hangar_buy[i].disabled = owned or int(data["coins"]) < price
+		_hangar_buy[i].kind = "secondary" if owned else "gold"
 	_menu_row.visible = false
 	_sel_row.visible = false
 	_reveal(_hangar_root, A_SLIDE_R)
@@ -1230,7 +1273,10 @@ func _sel_button(text: String, dir: int) -> UiButton:
 	return b
 
 ## Show the chosen aircraft's name and a line about how it flies.
-func set_plane_choice(id: int) -> void:
+func set_plane_choice(id: int, rent_line: String = "", owned: bool = true) -> void:
+	_sel_rent.text = rent_line
+	_sel_rent.add_theme_color_override("font_color", Style.SUCCESS if owned else Style.ACCENT)
+	_sel_rent.visible = rent_line != ""
 	var pr: Dictionary = Planes.profile(id)
 	_sel_name.text = pr["name"]
 	_sel_icon.glyph = Icons.aircraft(id)
@@ -1255,7 +1301,7 @@ func over_selector(pos: Vector2) -> bool:
 		return true
 	if not _sel_row.visible:
 		return false
-	return Rect2(0.0, vs.y * 0.52 - 10.0, vs.x, 280.0).has_point(pos) or Rect2(0.0, vs.y * 0.78 - 10.0, vs.x, 440.0).has_point(pos)
+	return Rect2(0.0, vs.y * 0.52 - 10.0, vs.x, 346.0).has_point(pos) or Rect2(0.0, vs.y * 0.78 - 10.0, vs.x, 440.0).has_point(pos)
 
 ## Where the airspeed bar draws its stall mark (the aircraft's stall speed).
 func set_stall(v: float) -> void:
@@ -1308,6 +1354,7 @@ func logo_running() -> bool:
 func _process(delta: float) -> void:
 	_update_anims(delta)
 	_update_rolls(delta)
+	_update_toast(delta)
 	if _live != null:
 		_live.visible = _menu_row.visible and not _splash.visible
 	if _logo_t < 0.0:
@@ -1347,6 +1394,18 @@ func _build_fx() -> void:
 	_place(_bank_icon, 0, 0, 40, 130, 110, 110)
 	_bank_icon.pivot_offset = Vector2(55, 55)
 	_bank_icon.visible = false
+	_toast_panel = Panel.new()
+	_toast_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_toast_panel)
+	move_child(_toast_panel, _splash.get_index())
+	_place(_toast_panel, 0.5, 0, -470, 1372, 940, 84)
+	_toast_panel.pivot_offset = Vector2(470, 42)
+	_toast_panel.visible = false
+	_toast_label = _label(34, HORIZONTAL_ALIGNMENT_CENTER)
+	remove_child(_toast_label)
+	_toast_panel.add_child(_toast_label)
+	_toast_label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_toast_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_cr_sig = _label(Style.SZ_M, HORIZONTAL_ALIGNMENT_LEFT)
 	remove_child(_cr_sig)
 	_cr_speech_panel.add_child(_cr_sig)
@@ -1371,6 +1430,53 @@ func _build_fx() -> void:
 	_lost_seal = _seal(slip_holder, "POT LOST", Color(1.0, 0.36, 0.3), 190.0, 1060.0, 700.0, 150.0)
 	_lost_label = _lost_seal.get_child(0) as Label
 	_lost_seal.visible = false
+
+## ---------- toasts: short messages on a pill ("Short Field +1, 2/3", "Rental -20 coins"), one after another ----------
+
+var _toast_q: Array[String] = []
+var _toast_cols: Array[Color] = []
+var _toast_panel: Panel
+var _toast_label: Label
+var _toast_t := -1.0
+var toast_log: Array[String] = []         # (tests) every toast shown, oldest first
+
+func toast(text: String, color: Color = Color(1, 1, 1)) -> void:
+	toast_log.append(text)
+	if toast_log.size() > 50:
+		toast_log.pop_front()
+	if _instant:
+		_toast_label.text = text
+		return
+	if _toast_q.size() >= 4:
+		_toast_q.pop_front()
+		_toast_cols.pop_front()
+	_toast_q.append(text)
+	_toast_cols.append(color)
+	if _toast_t < 0.0:
+		_next_toast()
+
+func _next_toast() -> void:
+	if _toast_q.is_empty():
+		_toast_t = -1.0
+		_toast_panel.visible = false
+		return
+	_toast_label.text = _toast_q.pop_front()
+	var col: Color = _toast_cols.pop_front()
+	_toast_label.add_theme_color_override("font_color", col)
+	_toast_panel.add_theme_stylebox_override("panel", Style.box(Color(Style.SURFACE_DARK, 0.94), col, Style.R_PILL, 4))
+	_toast_panel.visible = true
+	_toast_t = 0.0
+
+func _update_toast(delta: float) -> void:
+	if _toast_t < 0.0:
+		return
+	_toast_t += delta
+	var k := _toast_t / 2.6
+	var a := clampf(_toast_t / 0.2, 0.0, 1.0) * clampf((2.6 - _toast_t) / 0.3, 0.0, 1.0)
+	_toast_panel.modulate.a = a
+	_toast_panel.scale = Vector2.ONE * (0.85 + 0.15 * Style.ease_out_back(clampf(_toast_t / 0.3, 0.0, 1.0)))
+	if k >= 1.0:
+		_next_toast()
 
 ## A rubber stamp: a bordered, slightly tilted word.
 func _seal(parent: Control, text: String, color: Color, x: float, y: float, w: float, h: float) -> Control:
@@ -1852,7 +1958,7 @@ func show_menu(best: int, career_text: String = "") -> void:
 	_set_overlay(true)
 	_ov_title.text = "GREASER"
 	_ov_title.add_theme_color_override("font_color", Color(1.0, 0.85, 0.2))
-	_ov_body.text = career_text + "Drag up / down to pitch the nose. Flare just before touchdown.\nTouch down on the aim markers. Three crashes end the run. No go-arounds." + (("\n\nBest: %d" % best) if best > 0 else "")
+	_ov_body.text = career_text + "Drag up / down to pitch the nose. Flare just before touchdown.\nTouch down on the aim markers. A crash loses the pot. No go-arounds." + (("\n\nBest: %d" % best) if best > 0 else "")
 	_ov_prompt.text = "TAP TO FLY"
 	if _back_flag and not _instant:
 		_anim(_sel_row, A_SLIDE_L)
@@ -1953,6 +2059,8 @@ func show_over(total: int, best: int, landings: int, new_best: bool, best_streak
 		money = "\nPot lost: %d coins" % lost
 	elif banked > 0:
 		money = "\nBanked  +%d coins" % banked
+	if over_extra != "":
+		money += "\n" + over_extra
 	_ov_body.text = "Score  %d\nLandings  %d\nBest streak  x%d\n%s%s" % [total, landings, maxi(best_streak, 1) if best_streak > 0 else 0, "NEW BEST!" if new_best else "Best  %d" % best, money]
 	_ov_prompt.text = "TAP TO FLY AGAIN"
 	_menu_row.visible = true

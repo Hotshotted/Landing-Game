@@ -61,7 +61,8 @@ static func combo_ok(scn: int, wx: int) -> bool:
 
 ## Choose the next approach: Vector2i(scenario, weather). `allowed_*` limit the choice (career unlocks, aircraft); empty =
 ## everything. `last` is the previous scenario (not repeated when there is a choice).
-static func pick(round_no: int, rng: RandomNumberGenerator, last: int = -1, allowed_scn: Array[int] = [], allowed_wx: Array[int] = []) -> Vector2i:
+## `prefer`: landing types to favour (the ones being trained for): they get a bigger share, the others are still mixed in.
+static func pick(round_no: int, rng: RandomNumberGenerator, last: int = -1, allowed_scn: Array[int] = [], allowed_wx: Array[int] = [], prefer: Array[int] = []) -> Vector2i:
 	var r := Tuning.ramp(round_no)
 	var scn := STANDARD
 	var wx := CLEAR
@@ -71,6 +72,8 @@ static func pick(round_no: int, rng: RandomNumberGenerator, last: int = -1, allo
 			1.5, 1.2 if r > 0.15 else 0.0, 1.2, 0.5 if r > 0.25 else 0.0,
 			1.4, 0.9 if r > 0.2 else 0.0, 1.0 if r > 0.2 else 0.0]
 		for i in COUNT:
+			if prefer.has(i):
+				w[i] = maxf(w[i], 0.8) * 2.2
 			if (not allowed_scn.is_empty() and not allowed_scn.has(i)) or i == last:
 				w[i] = 0.0
 		scn = _weighted(w, rng, STANDARD)
