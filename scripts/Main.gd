@@ -146,18 +146,7 @@ func _ready() -> void:
 	add_child(fog)
 	hud = Hud.new()
 	add_child(hud)
-	UiButton.on_down = func(kind: String):
-		match kind:
-			"ghost":
-				sfx.play(Sfx.BACK, 1.0, -7.0)
-			"primary", "gold":
-				sfx.play(Sfx.CONFIRM, 1.0, -9.0)
-			"danger":
-				sfx.play(Sfx.DENY, 1.0, -10.0)
-			_:
-				sfx.play(Sfx.TAP, 1.0, -8.0)
-		if DisplayServer.get_name() != "headless":
-			Input.vibrate_handheld(8)
+	UiButton.on_down = _on_button_down
 	Style.detect_safe(get_viewport().get_visible_rect().size)
 	hud.apply_safe()
 	hud.ui_sound.connect(_on_ui_sound)
@@ -1219,6 +1208,20 @@ func _update_audio(dt: float) -> void:
 		goal = smoothstep(0.55, 1.0, _closeness()) * 0.55
 	_final_tension = move_toward(_final_tension, goal, dt * 0.5)
 	music.set_tension(maxf(_tension_base, _final_tension))
+
+## A finger went down on a button: its own sound by kind, and a light haptic.
+func _on_button_down(kind: String) -> void:
+	match kind:
+		"ghost":
+			sfx.play(Sfx.BACK, 1.0, -7.0)
+		"primary", "gold":
+			sfx.play(Sfx.CONFIRM, 1.0, -9.0)
+		"danger":
+			sfx.play(Sfx.DENY, 1.0, -10.0)
+		_:
+			sfx.play(Sfx.TAP, 1.0, -8.0)
+	if DisplayServer.get_name() != "headless":
+		Input.vibrate_handheld(8)
 
 func _on_ui_sound(kind: String) -> void:
 	match kind:

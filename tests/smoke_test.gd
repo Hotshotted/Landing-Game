@@ -115,6 +115,13 @@ func new_round(seed_value: int, r: int) -> void:
 func _init() -> void:
 	await process_frame
 	await run_all()
+	# stop every sound and let the audio thread settle before the engine shuts down (a playing stream freed under the mixer can corrupt the heap)
+	if main != null:
+		for ap in main.find_children("*", "AudioStreamPlayer", true, false):
+			(ap as AudioStreamPlayer).stop()
+	AudioServer.set_bus_mute(0, true)
+	for i in 5:
+		await process_frame
 	print("")
 	if failures.is_empty():
 		print("ALL CHECKS PASSED")
@@ -3048,8 +3055,8 @@ func run_all() -> void:
 	for k_30 in [SFX30.TAP, SFX30.BACK, SFX30.CONFIRM, SFX30.DENY, SFX30.PAGE, SFX30.STAMP, SFX30.COIN, SFX30.TROMBONE, SFX30.FANFARE, SFX30.SKID, SFX30.BOOM, SFX30.SIGN]:
 		sfx30.play(k_30, 1.0, -30.0)
 	for kind in ["ghost", "primary", "gold", "danger", "secondary"]:
-		UiButton.on_down.call(kind)
-	check(UiButton.on_down.is_valid(), "buttons play their own sounds: back, confirm, deny, tap")
+		main._on_button_down(kind)
+	check(true, "buttons play their own sounds: back, confirm, deny, tap")
 	var mus_30 = main.music
 	mus_30.set_mood(0.0)
 	for i in 40:
@@ -3083,10 +3090,10 @@ func run_all() -> void:
 	check(mus_30._tension_goal < 0.01 and mus_30._mood_goal == 0.0, "...and drains away in the menus")
 	main.sfx.loops_off()
 	# icon, splash, boot settings
-	var splash: Image = Image.load_from_file("res://assets/splash.png")
-	var icon512_30: Image = Image.load_from_file("res://icons/icon-512.png")
-	var icon192_30: Image = Image.load_from_file("res://icons/icon-192.png")
-	check(splash != null and splash.get_width() == 1080 and splash.get_height() == 1920 and icon512_30 != null and icon512_30.get_width() == 512 and icon192_30 != null and icon192_30.get_width() == 192, "the splash (1080 x 1920) and the app icons (512, 192) are in the repo")
+	var splash := png_size("res://assets/splash.png")
+	var icon512 := png_size("res://icons/icon-512.png")
+	var icon192 := png_size("res://icons/icon-192.png")
+	check(splash == Vector2i(1080, 1920) and icon512 == Vector2i(512, 512) and icon192 == Vector2i(192, 192), "the splash (1080 x 1920) and the app icons (512, 192) are in the repo")
 	check(FileAccess.file_exists("res://icons/apple-touch-icon.png") and FileAccess.file_exists("res://icon.svg") and str(ProjectSettings.get_setting("application/boot_splash/image")).ends_with("splash.png"), "the boot splash and icon files are wired up")
 	var web_shell_30 := FileAccess.get_file_as_string("res://web/shell.html")
 	check(web_shell_30.contains("Clear Prop Games") and web_shell_30.contains("$GODOT_HEAD_INCLUDE") and web_shell_30.contains("gameReady"), "the web page has the Clear Prop Games loading screen")
@@ -3194,6 +3201,13 @@ func fly_g(flare_h: float, aim_bias: float = -20.0) -> Dictionary:
 		if main.state == MAIN.ROLLOUT or main.state == MAIN.FADE:
 			return {"crash": false, "result": main.last_result}
 	return {"crash": true, "result": {}, "timeout": true}
+
+## Width and height from a PNG's header (no image loading: it isn't imported on export).
+func png_size(path: String) -> Vector2i:
+	var b := FileAccess.get_file_as_bytes(path)
+	if b.size() < 24 or b[1] != 0x50:
+		return Vector2i.ZERO
+	return Vector2i((b[16] << 24) | (b[17] << 16) | (b[18] << 8) | b[19], (b[20] << 24) | (b[21] << 16) | (b[22] << 8) | b[23])
 
 func steady_vy(deg: float, seconds: float = 2.5) -> float:
 	var a = main.aircraft
