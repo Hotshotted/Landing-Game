@@ -99,6 +99,10 @@ var _ad_on := false
 var _sel_row: Control
 var _sel_name: Label
 var _sel_info: Label
+var _strip: ApproachStrip
+var _rwy_ind: Panel
+var _rwy_ind_label: Label
+var _rwy_ind_icon: UiIcon
 var _sel_rent: Label
 var over_extra := ""                    # extra lines for the run-over screen (rental and damage fees)
 var _sel_icon: UiIcon
@@ -1401,6 +1405,7 @@ func _build_fx() -> void:
 	_place(_bank_icon, 0, 0, 40, 130, 110, 110)
 	_bank_icon.pivot_offset = Vector2(55, 55)
 	_bank_icon.visible = false
+	_build_strip()
 	_toast_panel = Panel.new()
 	_toast_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_toast_panel)
@@ -1437,6 +1442,101 @@ func _build_fx() -> void:
 	_lost_seal = _seal(slip_holder, "POT LOST", Color(1.0, 0.36, 0.3), 190.0, 1060.0, 700.0, 150.0)
 	_lost_label = _lost_seal.get_child(0) as Label
 	_lost_seal.visible = false
+
+## The approach profile strip across the top, the HUD's top row moved down under it, and the off-screen runway arrow.
+const STRIP_SHIFT := 140.0
+func _build_strip() -> void:
+	_strip = ApproachStrip.new()
+	add_child(_strip)
+	move_child(_strip, _splash.get_index())
+	var right_gap := 110.0 + (190.0 if DebugFlags.tune_enabled() else 0.0)
+	_place(_strip, 0, 0, 24, 14, 1080.0 - 48.0 - right_gap, 120)
+	_strip.set_meta("top_hud", true)
+	_pause_btn.set_meta("top_hud", true)
+	for c in [_score, _round, _wind, _runway, _dist, _pot, _streak_label, _streak_flame, _scn_label, _gust, _alt, _sink, _speed_back, _speed_band, _speed_bar, _stall_mark, _speed_label]:
+		(c as Control).offset_top += STRIP_SHIFT
+		(c as Control).offset_bottom += STRIP_SHIFT
+		c.set_meta("top_hud", true)
+	for c in _strikes:
+		c.offset_top += STRIP_SHIFT
+		c.offset_bottom += STRIP_SHIFT
+		c.set_meta("top_hud", true)
+	_rwy_ind = Panel.new()
+	_rwy_ind.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_rwy_ind.add_theme_stylebox_override("panel", Style.box(Color(Style.SURFACE_DARK, 0.86), Style.ACCENT, Style.R_PILL, 3))
+	add_child(_rwy_ind)
+	move_child(_rwy_ind, _splash.get_index())
+	_place(_rwy_ind, 1, 0, -318, 1370, 306, 70)
+	_rwy_ind.visible = false
+	_rwy_ind_label = _label(30, HORIZONTAL_ALIGNMENT_CENTER)
+	remove_child(_rwy_ind_label)
+	_rwy_ind.add_child(_rwy_ind_label)
+	_rwy_ind_label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_rwy_ind_label.offset_left = 14
+	_rwy_ind_label.offset_right = -60
+	_rwy_ind_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_rwy_ind_icon = UiIcon.new()
+	_rwy_ind_icon.glyph = "forward"
+	_rwy_ind_icon.tint = Style.ACCENT
+	_rwy_ind.add_child(_rwy_ind_icon)
+	_rwy_ind_icon.position = Vector2(250, 12)
+	_rwy_ind_icon.size = Vector2(46, 46)
+
+## A round was laid out: draw its profile (the obstacles, the runway, the glidepath) on the strip.
+func set_profile(af: Airfield, start_x: float, start_y: float) -> void:
+	_strip.set_profile(af, start_x, start_y)
+
+## Every frame: the plane's dot on the strip and, while the runway is off the right edge of the screen, the arrow pointing at it.
+## `show`: the strip is visible; `ind_ft` >= 0 shows "RWY n ft" at screen height `ind_y`.
+func set_strip(x: float, y: float, thr_now: float, end_now: float, show: bool, ind_ft: float = -1.0, ind_y: float = 0.0) -> void:
+	_strip.visible = show
+	if show:
+		_strip.set_plane(x, y, thr_now, end_now)
+	var on := show and ind_ft >= 0.0
+	_rwy_ind.visible = on
+	if on:
+		var n := int(roundf(ind_ft / 10.0)) * 10
+		_rwy_ind_label.text = "RWY %s ft" % _thousands(n)
+		var vs := get_viewport().get_visible_rect().size
+		_rwy_ind.offset_top = vs.y * 0.46 - 35.0      # (mid-screen on the right: clear of the obstacles and the ground ahead)
+		_rwy_ind.offset_bottom = _rwy_ind.offset_top + 70.0
+
+static func _thousands(n: int) -> String:
+	var s := str(absi(n))
+	var out := ""
+	for i in s.length():
+		if i > 0 and (s.length() - i) % 3 == 0:
+			out += ","
+		out += s[i]
+	return ("-" if n < 0 else "") + out
+
+## Where everything at the top of the screen is, in viewport pixels: "group.name" -> the rect of the element's ink (a label's
+## text, not its box). The smoke test checks that no two elements of different groups overlap on 9:16 and 9:20.
+func layout_rects() -> Dictionary:
+	var ink := func(c: Control) -> Rect2:
+		var cr := c.get_global_rect()
+		if c is Label:
+			var lb := c as Label
+			var ms := lb.get_minimum_size()
+			var w := minf(ms.x, cr.size.x)
+			var x := cr.position.x
+			if lb.horizontal_alignment == HORIZONTAL_ALIGNMENT_CENTER:
+				x = cr.position.x + (cr.size.x - w) * 0.5
+			elif lb.horizontal_alignment == HORIZONTAL_ALIGNMENT_RIGHT:
+				x = cr.end.x - w
+			cr = Rect2(x, cr.position.y, w, minf(ms.y, cr.size.y))
+		return cr
+	var out := {
+		"strip.strip": _strip.get_global_rect(),
+		"pause.pause": pause_button_rect(),
+		"papi.papi": Rect2(papi_rect().position - Vector2(18, 18), papi_rect().size + Vector2(36, 36 + 44)),
+	}
+	var groups := {"speed": [_alt, _sink, _speed_back, _speed_band, _speed_label], "left": [_score, _round, _pot, _scn_label, _streak_label],
+		"center": [_wind, _runway, _dist]}
+	for g in groups:
+		for c in groups[g]:
+			out["%s.%d" % [g, (c as Control).get_instance_id()]] = ink.call(c)
+	return out
 
 ## ---------- toasts: short messages on a pill ("Short Field +1, 2/3", "Rental -20 coins"), one after another ----------
 
@@ -1720,7 +1820,9 @@ func _pin_safe(c: Control, vs: Vector2, top_level: bool) -> void:
 		c.set_meta("base_right", c.offset_right)
 	var y: float = c.anchor_top * vs.y + float(c.get_meta("base_top"))
 	var dy := 0.0
-	if c.anchor_top == 0.0 and y < Style.safe_top + 60.0 and not (c is ColorRect and c.size.x > 600.0):
+	if c.has_meta("top_hud"):
+		dy = Style.safe_top
+	elif c.anchor_top == 0.0 and y < Style.safe_top + 60.0 and not (c is ColorRect and c.size.x > 600.0):
 		dy = Style.safe_top
 	elif c.anchor_top == 1.0 or y + c.size.y > vs.y - 140.0 - Style.safe_bottom and c.anchor_top > 0.5 and y > vs.y * 0.8:
 		dy = -Style.safe_bottom

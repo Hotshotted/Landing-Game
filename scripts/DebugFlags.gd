@@ -15,7 +15,7 @@ extends RefCounted
 ##   ?plane=cub|172|twin|glider|jet                    start in that aircraft
 ##   ?debug                                            show the build stamp (also shown with ?tune and ?perf)
 ##   ?tod=day|dusk                                     force the time of day (cosmetic)
-##   ?closeup                                          frame the aircraft close from the start (screenshots)
+##   ?closeup=N                                        start N units before the threshold, on the glidepath (screenshots; default 10)
 ##   ?nologo                                           skip the studio logo intro
 ##   ?noads                                            no ad stubs (interstitials)
 ##   ?screen=certificate|slip|career|logbook|hangar|choice|pause     open that screen at start (to look at it)
@@ -39,6 +39,7 @@ static var plane_value := -1
 static var noads := false
 static var nologo := false
 static var closeup := false
+static var closeup_dist := 10.0
 static var tod_value := -1
 static var debug := false
 static var screen_value := ""
@@ -60,6 +61,10 @@ static func perf_enabled() -> bool:
 static func tod_forced() -> int:
 	_load()
 	return tod_value
+
+static func closeup_distance() -> float:
+	_load()
+	return closeup_dist
 
 static func closeup_enabled() -> bool:
 	_load()
@@ -171,6 +176,7 @@ static func parse(args: Array[String]) -> void:
 	noads = false
 	nologo = false
 	closeup = false
+	closeup_dist = 10.0
 	tod_value = -1
 	debug = false
 	screen_value = ""
@@ -198,6 +204,8 @@ static func parse(args: Array[String]) -> void:
 				tod_value = 1 if val == "dusk" else 0
 			"closeup":
 				closeup = true
+				if val != "":
+					closeup_dist = maxf(float(val), 4.0)
 			"debug":
 				debug = true
 			"screen":

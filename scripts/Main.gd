@@ -91,8 +91,6 @@ var _cam_x := 0.0
 var _cam_y := 0.0
 var _cam_dx := 0.0
 var _tilt := 9.0
-var _full_w := 120.0          # this round's wide framing (plane start .. runway end) ...
-var _full_left := 0.0         # ... and its left edge
 var _start_agl := 20.0          # the plane's height above the ground at the start of the approach
 var _start_x := 0.0           # where the plane started this approach
 var _dist_key := -1           # what the runway distance readout shows (rebuilt only when it changes)
@@ -409,9 +407,9 @@ func _begin_round(card: bool = true) -> void:
 	aircraft.set_floats(scenario == Scenarios.WATER)
 	aircraft.set_night(airfield.night)
 	aircraft.reset(0.0, airfield.start_altitude)
-	if DebugFlags.closeup_enabled():       # (screenshots: start just before the threshold, low, to look at the runway)
-		aircraft.x = airfield.thr - 10.0
-		aircraft.y = airfield.ground_y(aircraft.x) + 5.0
+	if DebugFlags.closeup_enabled():       # (screenshots: start N units before the threshold, on the glidepath)
+		aircraft.x = airfield.thr - DebugFlags.closeup_distance()
+		aircraft.y = airfield.ground_y(airfield.aim_x) + maxf((airfield.aim_x - aircraft.x) * airfield.papi_slope, 2.0)
 	_start_x = aircraft.x
 	_start_agl = aircraft.agl()
 	_standard = Standards.for_type(scenario, _tier())
@@ -423,7 +421,7 @@ func _begin_round(card: bool = true) -> void:
 	_papi_worst = 0.0
 	_instr_open = 0.0
 	last_verdict = {}
-	_compute_full_frame()
+	_set_profile()
 	airfield.update_papi(aircraft.x, aircraft.y, true)
 	_dist_key = -1
 	_graded = false
@@ -1189,23 +1187,28 @@ func _show_over() -> void:
 
 # ---------- camera / HUD ----------
 
-## This round's wide framing: the plane at the left edge and the whole runway on screen.
-func _compute_full_frame() -> void:
-	var span := airfield.rwy_end + 30.0 - _start_x
-	_full_w = clampf(span * 1.1, Tuning.view_width_low * 1.5, Tuning.view_width_full_max)
-	_full_left = _start_x - 0.07 * _full_w
+## The approach profile strip: lay this round's obstacles, runway and glidepath out on it.
+func _set_profile() -> void:
+	hud.set_profile(airfield, _start_x, aircraft.y)
 
-## 0 = the wide framing at the start of the approach, 1 = the close flare framing. Driven by the distance to the aim
-## markers (and forced by a low altitude), eased so the zoom starts and ends gently.
+## 0 at the start of the approach, 1 at the aim markers: how far along it is (the music's tension follows it).
 func _closeness() -> float:
-	if DebugFlags.closeup_enabled():
-		return 1.0
 	var d0 := maxf(airfield.aim_x - _start_x, 1.0)
 	var d := airfield.aim_x - aircraft.x
-	var by_dist := clampf((d0 - d) / maxf(d0 - Tuning.zoom_close_distance, 1.0), 0.0, 1.0)
-	var hi := maxf(_start_agl, Tuning.zoom_low_altitude + 1.0)
-	var by_alt := clampf((hi - aircraft.agl()) / maxf(hi - Tuning.zoom_low_altitude, 0.5), 0.0, 1.0)
-	return smoothstep(0.0, 1.0, maxf(by_dist, by_alt))
+	return smoothstep(0.0, 1.0, clampf((d0 - d) / maxf(d0 - 80.0, 1.0), 0.0, 1.0))
+
+## The near edge (world x) of the next obstacle ahead of the plane (a tree or the hill), or INF.
+func _next_obstacle_x() -> float:
+	var best := INF
+	for i in airfield.tree_count:
+		var edge := airfield.tree_x[i] - airfield.tree_hw[i]
+		if edge > aircraft.x - 1.0:
+			best = minf(best, edge)
+	if airfield.hill_on:
+		var he := airfield.hill_x - airfield.hill_hw
+		if he > aircraft.x - 1.0:
+			best = minf(best, he)
+	return best
 
 func _snap_camera() -> void:
 	_update_camera(0.0, true)
@@ -1220,20 +1223,26 @@ func _aspect() -> float:
 	var vs := get_viewport().get_visible_rect().size
 	return vs.y / maxf(vs.x, 1.0)
 
-## Frame the camera: width from the zoom progress, the left edge sliding from "plane at the far left, runway ahead"
-## to "plane at plane_screen_x", the tilt and ground height easing with the width. `snap` jumps there at once.
+## Frame the camera: a close view on the plane for the whole approach, the plane at plane_screen_x so there is room ahead.
+## The width only grows (gently, up to cam_pullback_max) to keep the next obstacle ahead on screen. `snap` jumps there at once.
 func _update_camera(dt: float, snap: bool = false) -> void:
 	var k := 1.0 if snap else (1.0 - exp(-Tuning.camera_smoothing * dt) if dt > 0.0 else 0.0)
-	var b := _closeness()
-	_cam_w = lerpf(_cam_w, lerpf(_full_w, Tuning.view_width_low, b), k)
-	var left := lerpf(_full_left, aircraft.x - _cam_w * Tuning.plane_screen_x, b)
+	var base := Tuning.view_width_low
+	var want := base
+	var ob := _next_obstacle_x()
+	if ob < INF and state != CRASH:
+		var need := (ob + 3.0 - aircraft.x) / (1.0 - Tuning.plane_screen_x)
+		if need > base and need <= base * Tuning.cam_pullback_max:
+			want = need
+	_cam_w = lerpf(_cam_w, want, k)
+	var left := aircraft.x - _cam_w * Tuning.plane_screen_x
 	if state == CRASH:      # the camera eases in on the wreck and stays with it
-		_cam_w = lerpf(_cam_w, Tuning.view_width_low * 0.7, k)
-		left = lerpf(left, aircraft.x - _cam_w * 0.5, 0.5)
+		_cam_w = lerpf(_cam_w, base * 0.7, k)
+		left = aircraft.x - _cam_w * 0.5
 	var old_x := _cam_x
 	_cam_x = left + _cam_w * 0.5
 	_cam_dx = 0.0 if snap else _cam_x - old_x
-	var wide := clampf((_cam_w - Tuning.view_width_low) / 200.0, 0.0, 1.0)
+	var wide := clampf((_cam_w - base) / 200.0, 0.0, 1.0)
 	_tilt = lerpf(Tuning.camera_tilt_deg, Tuning.camera_tilt_wide_deg, wide)
 	var h := _cam_w * _aspect()
 	var ground_y := lerpf(Tuning.ground_screen_y, Tuning.ground_screen_y_wide, wide)
@@ -1263,6 +1272,12 @@ func _update_hud(dt: float) -> void:
 	var flying := state == APPROACH
 	hud.set_flight(aircraft.agl(), aircraft.vy - aircraft.gs * airfield.slope_at(aircraft.x) if not aircraft.on_ground else 0.0, aircraft.s, Planes.vref(plane_id), flying and not hud.overlay_visible)
 	hud.set_papi(airfield.papi_white, _plane_screen_x(), flying and not _graded and not hud.overlay_visible)
+	var on_strip := (state == APPROACH or state == ROLLOUT) and not hud.overlay_visible
+	var ind_ft := -1.0
+	var ind_y := 0.0
+	if state == APPROACH and not hud.overlay_visible and airfield.thr > _cam_x + _cam_w * 0.5 - 1.5:
+		ind_ft = Units.ft(airfield.thr - aircraft.x)         # the runway is off the right edge: an arrow says how far
+	hud.set_strip(aircraft.x, aircraft.y, airfield.thr, airfield.rwy_end, on_strip, ind_ft, ind_y)
 	if state == APPROACH or state == ROLLOUT:
 		hud.set_wind(wind.head())
 		_update_distance()

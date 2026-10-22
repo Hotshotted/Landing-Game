@@ -518,55 +518,114 @@ func run_all() -> void:
 			check(false, "tune entry %s exists in Tuning" % e[0])
 
 	print("== 10. framing, zoom, readout, layers, PAPI ==  [nodes %d]" % nodes())
-	# every approach starts with the plane and the WHOLE runway on screen
-	var framed_ok := true
-	var wide_start := 0.0
+	# the camera: a_cm close framing on the plane for the whole approach, with room ahead (no zoom-out)
+	var base_w_cm: float = tn.view_width_low
+	var max_w_cm: float = base_w_cm * float(tn.cam_pullback_max)
+	var close_ok_cm := true
+	var ahead_ok_cm := true
 	for i in 16:
 		new_round(500 + i, 1 + (i * 3) % 14)
-		var left: float = main._cam_x - main._cam_w * 0.5
-		var right: float = main._cam_x + main._cam_w * 0.5
-		var capped: bool = main._full_w >= float(tn.view_width_full_max) - 0.01
-		if not capped and not (main.aircraft.x >= left and main.airfield.rwy_end <= right):
-			framed_ok = false
-			print("      not framed: round %d left %.0f right %.0f plane %.0f rwy_end %.0f" % [main.round_no, left, right, main.aircraft.x, main.airfield.rwy_end])
-		wide_start += main._cam_w
-	check(framed_ok, "every approach starts framed with the plane and the whole runway on screen")
-	check(wide_start / 16.0 > 2.0 * float(tn.view_width_low), "...a much wider view than the close framing (mean start width %.0f vs %.0f)" % [wide_start / 16.0, float(tn.view_width_low)])
+		var left_cm: float = main._cam_x - main._cam_w * 0.5
+		close_ok_cm = close_ok_cm and main._cam_w >= base_w_cm - 0.01 and main._cam_w <= max_w_cm + 0.01
+		ahead_ok_cm = ahead_ok_cm and absf((main.aircraft.x - left_cm) / main._cam_w - float(tn.plane_screen_x)) < 0.02
+	check(close_ok_cm, "every approach starts in the close framing: %.0f to %.0f wide, no zoom-out (%.0f units = %d ft)" % [base_w_cm, max_w_cm, base_w_cm, int(UN.ft(base_w_cm))])
+	check(ahead_ok_cm, "...with the plane at %.0f %% of the width, so the rest of the screen is look-ahead room" % (float(tn.plane_screen_x) * 100.0))
 	main.advance(1.0 / 60.0)
-	check(main.airfield._mark > 1.5 and main.aircraft._view_scale > 1.2, "zoomed out, the markers and the plane are drawn larger so they stay visible")
-	# zoom: smooth, never zooms back out, reaches the close framing for the flare
-	new_round(520, 4)
-	var widths: Array[float] = []
-	var first_w: float = main._cam_w
-	var bad_step := 0.0
-	var zoom_ok := true
-	var prev_w: float = main._cam_w
-	var flare_w := -1.0
-	var t_fly := 0.0
-	while t_fly < 70.0:
-		t_fly += 1.0 / 60.0
-		var gs2: float = maxf(float(main.aircraft.gs), 4.0)
-		var t_go2: float = maxf((float(main.airfield.aim_x) - float(main.aircraft.x)) / gs2, 0.5)
-		var trim2: float = main.aircraft.trim_sink()
-		var want2: float = clampf(-float(main.aircraft.y) / t_go2, -1.6 * trim2, -0.7 * trim2)
-		var cmd2: float = (want2 + trim2) / main.aircraft.lift_gain()
+	check(main.airfield._mark < 1.2 and main.aircraft._view_scale < 1.2, "(markers and the plane are drawn at their true size)")
+	# a_cm whole approach: the width never zooms out, only pulls back a_cm little for the next obstacle, smoothly; obstacles are on screen in time
+	force(SC.SHORT_FIELD, SC.CLEAR)
+	new_round(520, 6)
+	var max_seen_cm := 0.0
+	var pull_unneeded_cm := false
+	var bad_step_cm := 0.0
+	var prev_w_cm: float = main._cam_w
+	var tree_in_view_cm := true
+	var t_fly_cm := 0.0
+	var flare_w_cm := -1.0
+	while t_fly_cm < 70.0:
+		t_fly_cm += 1.0 / 60.0
+		var gs2_cm: float = maxf(float(main.aircraft.gs), 4.0)
+		var t_go2_cm: float = maxf((float(main.airfield.aim_x) - float(main.aircraft.x)) / gs2_cm, 0.5)
+		var trim2_cm: float = main.aircraft.trim_sink()
+		var want2_cm: float = clampf(-float(main.aircraft.y) / t_go2_cm, -1.6 * trim2_cm, -0.7 * trim2_cm)
+		var cmd2_cm: float = (want2_cm + trim2_cm) / main.aircraft.lift_gain()
 		if main.aircraft.y < 2.5:
-			cmd2 = (-(0.33 + 0.3 * float(main.aircraft.y)) + trim2) / main.aircraft.lift_gain()
-		set_nose(cmd2)
+			cmd2_cm = (-(0.33 + 0.3 * float(main.aircraft.y)) + trim2_cm) / main.aircraft.lift_gain()
+		set_nose(cmd2_cm)
 		main.advance(1.0 / 60.0)
-		var w2: float = main._cam_w
-		if w2 > prev_w + 0.02 * prev_w + 0.3:
-			zoom_ok = false
-		bad_step = maxf(bad_step, absf(w2 - prev_w) / maxf(prev_w, 1.0))
-		prev_w = w2
-		if flare_w < 0.0 and main.aircraft.y < 2.5:
-			flare_w = w2
+		var w2_cm: float = main._cam_w
+		max_seen_cm = maxf(max_seen_cm, w2_cm)
+		bad_step_cm = maxf(bad_step_cm, absf(w2_cm - prev_w_cm) / maxf(prev_w_cm, 1.0))
+		prev_w_cm = w2_cm
+		var ob_cm: float = main._next_obstacle_x()
+		if w2_cm > base_w_cm + 0.8 and (ob_cm == INF or ob_cm - main.aircraft.x > max_w_cm * 1.05):
+			pull_unneeded_cm = true
+		if ob_cm < INF and ob_cm - main.aircraft.x < 0.6 * (1.0 - float(tn.plane_screen_x)) * base_w_cm and main.state == MAIN.APPROACH:
+			tree_in_view_cm = tree_in_view_cm and ob_cm <= main._cam_x + main._cam_w * 0.5
+		if flare_w_cm < 0.0 and main.aircraft.y < 2.5:
+			flare_w_cm = w2_cm
 		if main.state != MAIN.APPROACH:
 			break
-	check(zoom_ok, "the zoom only ever tightens during the approach")
-	check(bad_step < 0.06, "...smoothly (biggest single-frame change %.1f %%)" % (bad_step * 100.0))
-	check(flare_w > 0.0 and flare_w < float(tn.view_width_low) * 1.1, "by the flare it is the close framing (%.1f wide vs %.1f)" % [flare_w, float(tn.view_width_low)])
-	check(first_w > flare_w * 2.0, "...from a much wider start (%.0f -> %.0f)" % [first_w, flare_w])
+	check(max_seen_cm <= max_w_cm + 0.3, "the view never zooms out: at most %.1f wide in a_cm whole approach (limit %.1f)" % [max_seen_cm, max_w_cm])
+	check(not pull_unneeded_cm, "...and pulls back only when the next obstacle is just beyond the edge")
+	check(bad_step_cm < 0.06, "...smoothly (biggest single-frame change %.1f %%)" % (bad_step_cm * 100.0))
+	check(tree_in_view_cm, "the next obstacle is on screen well before the plane reaches it")
+	check(flare_w_cm > 0.0 and flare_w_cm < base_w_cm * 1.35, "by the flare it is still the close framing (%.1f wide vs %.1f)" % [flare_w_cm, base_w_cm])
+	force(-1, -1)
+	# the approach profile strip and the off-screen runway arrow
+	force(SC.SHORT_FIELD, SC.CLEAR)
+	new_round(530, 6)
+	main._update_hud(0.016)
+	var strip: Control = main.hud._strip
+	var af: Node = main.airfield
+	check(strip.visible and strip.terrain.size() == 96 and strip.tops.size() == af.tree_count + (1 if af.hill_on else 0), "the profile strip shows this approach: every obstacle (%d) marked at its place" % strip.tops.size())
+	check(strip.x0 <= main.aircraft.x and strip.x1 >= af.rwy_end and absf(strip.aim_x - af.aim_x) < 0.01 and strip.path_slope == af.papi_slope, "...from the start of the approach to past the runway end, with the glidepath")
+	var snap_x0_cm: float = strip.x0
+	var snap_ymax_cm: float = strip.y_max
+	var p0_cm: Vector2 = strip._map(main.aircraft.x, main.aircraft.y)
+	for i in 120:
+		set_nose(0.0)
+		main.advance(1.0 / 60.0)
+	main._update_hud(0.016)
+	var p1_cm: Vector2 = strip._map(main.aircraft.x, main.aircraft.y)
+	check(p1_cm.x > p0_cm.x + 3.0 and strip.x0 == snap_x0_cm and strip.y_max == snap_ymax_cm, "the plane's dot moves along it while the strip itself never moves (%.0f -> %.0f px)" % [p0_cm.x, p1_cm.x])
+	var tree_pt_cm: Vector2 = strip._map(strip.tops[0].x, strip.tops[0].y) if strip.tops.size() > 0 else Vector2.ZERO
+	check(strip.tops.size() == 0 or (tree_pt_cm.x > 0.0 and tree_pt_cm.x < strip.size.x and tree_pt_cm.y > 0.0 and tree_pt_cm.y < strip.size.y), "...obstacles inside the strip at their true distance and height")
+	new_round(531, 6)
+	main._update_hud(0.016)
+	var far_ft_cm: float = UN.ft(af.thr - main.aircraft.x)
+	check(main.hud._rwy_ind.visible and main.hud._rwy_ind_label.text.begins_with("RWY ") and main.hud._rwy_ind_label.text.ends_with(" ft"), "while the runway is off screen an arrow says how far (%s, %.0f ft)" % [main.hud._rwy_ind_label.text, far_ft_cm])
+	check(main.hud._thousands(1200) == "1,200" and main.hud._thousands(950) == "950" and main.hud._thousands(12345) == "12,345", "(distances read 1,200 ft)")
+	main.aircraft.x = af.thr - 6.0
+	main.aircraft.y = af.ground_y(main.aircraft.x) + 4.0
+	main._snap_camera()
+	main._update_hud(0.016)
+	check(not main.hud._rwy_ind.visible, "...and the arrow goes once the runway is in view")
+	# the top of the screen on 9:16 and 9:20: nothing overlaps
+	var lay_ok_cm := true
+	var lay_msg_cm := ""
+	for vs_h_cm in [1920.0, 2400.0]:
+		root.size = Vector2i(540, int(vs_h_cm / 2.0))
+		await process_frame
+		await process_frame
+		main.hud.apply_safe()
+		main.hud.set_papi(2, 540.0, true, true)
+		main.hud._layout_papi(0.0)
+		main.hud.set_flight(20.0, -1.0, 1.0, 65.0, true)
+		var lr_cm: Dictionary = main.hud.layout_rects()
+		var names_cm: Array = lr_cm.keys()
+		for a_cm in names_cm.size():
+			for b_cm in range(a_cm + 1, names_cm.size()):
+				if str(names_cm[a_cm]).get_slice(".", 0) != str(names_cm[b_cm]).get_slice(".", 0) and (lr_cm[names_cm[a_cm]] as Rect2).intersects(lr_cm[names_cm[b_cm]] as Rect2):
+					lay_ok_cm = false
+					lay_msg_cm += " %s/%s@%d" % [str(names_cm[a_cm]).get_slice(".", 0), str(names_cm[b_cm]).get_slice(".", 0), int(vs_h_cm)]
+		lay_ok_cm = lay_ok_cm and (lr_cm["strip.strip"] as Rect2).position.y >= 0.0 and (lr_cm["strip.strip"] as Rect2).end.x <= (lr_cm["pause.pause"] as Rect2).position.x + 0.5
+	root.size = Vector2i(540, 960)
+	await process_frame
+	await process_frame
+	main.hud.apply_safe()
+	check(lay_ok_cm, "on 9:16 and 9:20 the strip, PAPI, airspeed block, pause button and the rest of the top row don't overlap%s" % lay_msg_cm)
+	force(-1, -1)
 	# runway distance readout
 	new_round(521, 2)
 	main._update_hud(0.016)
@@ -1554,26 +1613,26 @@ func run_all() -> void:
 	var dat: Dictionary = SV.default_data()
 	var tgt := 2
 	check(not CAR.endorsed(dat, tgt) and CAR.missing(dat, tgt) == CAR.types_for(tgt), "no practice yet: nothing is endorsed, every type is missing")
-	check(CAR.needed() == 3, "3 practice landings fill a meter (Tuning)")
+	check(CAR.needed() == 4, "4 qualifying landings fill a meter (Tuning)")
 	for k in 5:
 		CAR.add_practice(dat, SC.STANDARD)
-	check(CAR.count(dat, SC.STANDARD) == 3, "a meter stops at full")
+	check(CAR.count(dat, SC.STANDARD) == 4, "a meter stops at full")
 	for ty in CAR.types_for(tgt):
-		for k in 3:
+		for k in CAR.needed():
 			CAR.add_practice(dat, ty)
 	check(CAR.endorsed(dat, tgt) and CAR.missing(dat, tgt).is_empty(), "every meter full: the instructor endorses")
 	CAR.drop_half(dat, SC.SHORT_FIELD)
-	check(CAR.count(dat, SC.SHORT_FIELD) == 1 and not CAR.endorsed(dat, tgt) and CAR.missing(dat, tgt) == [SC.SHORT_FIELD], "a failed type drops back to half and the endorsement goes")
+	check(CAR.count(dat, SC.SHORT_FIELD) == 2 and not CAR.endorsed(dat, tgt) and CAR.missing(dat, tgt) == [SC.SHORT_FIELD], "a failed type drops back to half and the endorsement goes")
 	CAR.drop_half(dat, SC.STANDARD)
-	check(CAR.count(dat, SC.STANDARD) == 1, "(and half is 1 of 3)")
-	dat["proficiency"]["counts"]["0"] = 3
-	dat["proficiency"]["counts"]["1"] = 3
+	check(CAR.count(dat, SC.STANDARD) == 2, "(and half is 2 of 4)")
+	dat["proficiency"]["counts"]["0"] = 4
+	dat["proficiency"]["counts"]["1"] = 4
 	dat["proficiency"]["tier"] = STD.tier_for_rank(2)
 	CAR.on_rank_change(dat, 2)         # now training for Private (3): the same tier? no: Private is tier 1
 	check(CAR.count(dat, SC.STANDARD) == 0, "a new tier starts the meters again")
-	dat["proficiency"]["counts"]["0"] = 3
+	dat["proficiency"]["counts"]["0"] = 4
 	CAR.on_rank_change(dat, 3)         # training for Instrument (4): same tier as Private
-	check(CAR.count(dat, SC.STANDARD) == 3, "the same tier keeps the meters it already filled")
+	check(CAR.count(dat, SC.STANDARD) == 4, "the same tier keeps the meters it already filled")
 	check(CAR.fee(1) == int(roundf(float(tn.exam_fee_base))) and CAR.fee(5) > CAR.fee(3) and CAR.fee(3) > CAR.fee(1), "the examiner fee grows with the rank (%d, %d, %d ...)" % [CAR.fee(1), CAR.fee(2), CAR.fee(3)])
 	check(CAR.fee(3, true) == int(ceilf(float(CAR.fee(3)) * 0.5)), "...and can be halved (%d -> %d)" % [CAR.fee(3), CAR.fee(3, true)])
 	var rngc := RandomNumberGenerator.new()
@@ -1663,13 +1722,13 @@ func run_all() -> void:
 	for pip in main.hud._cr_rows[0]["pips"]:
 		if pip.visible:
 			pips_shown += 1
-	check(pips_shown == 3, "...each with a proficiency meter of %d pips" % pips_shown)
+	check(pips_shown == 4, "...each with a proficiency meter of %d pips" % pips_shown)
 	SV.data["proficiency"]["counts"]["0"] = 2
 	main._on_menu_action("career")
 	check(main.hud._cr_rows[0]["pips"][1].color.g > 0.8 and main.hud._cr_rows[0]["pips"][2].color.g < 0.5, "two landings in: two pips lit")
 	check(main.hud._cr_speech.text.contains("Soft Field") and main.hud._cr_stamp.text == "", "the instructor says what is left to practise")
-	SV.data["proficiency"]["counts"]["8"] = 3
-	SV.data["proficiency"]["counts"]["0"] = 3
+	SV.data["proficiency"]["counts"]["8"] = 4
+	SV.data["proficiency"]["counts"]["0"] = 4
 	main._on_menu_action("career")
 	check(main.hud._cr_stamp.text == "ENDORSED" and main.hud._cr_speech.text.contains("endorsement"), "every meter full: the instructor signs the endorsement")
 	main._on_menu_action("back")
@@ -2157,7 +2216,7 @@ func run_all() -> void:
 	land_at(0.3, 0.0)
 	finish_practice.call()
 	check(main.state == MAIN.OVER and main.last_verdict["pass"] and CAR.count(SV.data, SC.STANDARD) == 1, "a landing to the standard fills one pip (%s)" % str(main.last_verdict))
-	check(main.hud._ov_title.text == "STANDARD MET" and main.hud._ov_body.text.contains("1 / 3"), "...and says so (%s)" % main.hud._ov_body.text.replace("\n", " | "))
+	check(main.hud._ov_title.text == "STANDARD MET" and main.hud._ov_body.text.contains("1 / 4"), "...and says so (%s)" % main.hud._ov_body.text.replace("\n", " | "))
 	check(main.plane_id == PL.CUB and SV.data["best"] == 0, "(practice isn't a scored run: best %d, plane %d, score %d)" % [SV.data["best"], main.plane_id, main.score])
 	main._death_time = Time.get_ticks_msec() / 1000.0 - 1.0
 	main._continue_from_over()
@@ -2186,7 +2245,7 @@ func run_all() -> void:
 		land_at(0.3, 0.0)
 		finish_practice.call()
 		main._continue_from_over()
-	check(CAR.count(SV.data, SC.STANDARD) == 3, "three good landings fill the meter, and no more (%d)" % CAR.count(SV.data, SC.STANDARD))
+	check(CAR.count(SV.data, SC.STANDARD) == 4, "four good landings fill the meter, and no more (%d)" % CAR.count(SV.data, SC.STANDARD))
 	check(not CAR.endorsed(SV.data, 1) and main.hud._cr_stamp.text == "", "...but the soft field is still to do: no endorsement yet")
 	# the soft field: hold the nose off
 	main._on_menu_action("practice:1")
@@ -2208,7 +2267,7 @@ func run_all() -> void:
 	finish_practice.call()
 	check(not main.last_verdict["pass"] and str(main.last_verdict["fails"]).contains("Nose") and CAR.count(SV.data, SC.SOFT_FIELD) == 1, "letting the nose drop early misses it (%s)" % str(main.last_verdict["fails"]))
 	main._continue_from_over()
-	for k in 2:
+	for k in 3:
 		main._on_menu_action("practice:1")
 		main._end_card()
 		land_at(0.3, 0.0)
@@ -2507,12 +2566,9 @@ func run_all() -> void:
 	var first_frame_ok := true
 	for i in 6:
 		new_round(2320 + i, 6)
-		if not (main.aircraft.x >= main._cam_x - main._cam_w * 0.5 and main.airfield.rwy_end <= main._cam_x + main._cam_w * 0.5):
-			if main._full_w < float(tn.view_width_full_max) - 0.01:
-				first_frame_ok = false
-		if main._cam_w < float(tn.view_width_low) * 2.0:
+		if main._cam_w > float(tn.view_width_low) * float(tn.cam_pullback_max) + 0.01:
 			first_frame_ok = false
-	check(first_frame_ok, "the first frame shows the plane and the whole runway (wide framing)")
+	check(first_frame_ok, "the first frame is the close framing, with no wide start")
 	force(-1, -1)
 
 	print("== 24. push-your-luck free flight ==  [nodes %d]" % nodes())
@@ -3355,7 +3411,7 @@ func run_all() -> void:
 	main.hud.toast_log.clear()
 	land_at(0.3, 0.0)
 	main._finish_round(false)
-	check(CAR.count(SV.data, SC.STANDARD) == 1 and main.hud.toast_log.any(func(t): return t.begins_with("Normal Landing  +1,  1/3")), "free flight: a landing to the standard fills the meter and a toast says so (%s)" % str(main.hud.toast_log))
+	check(CAR.count(SV.data, SC.STANDARD) == 1 and main.hud.toast_log.any(func(t): return t.begins_with("Normal Landing  +1,  1/4")), "free flight: a landing to the standard fills the meter and a toast says so (%s)" % str(main.hud.toast_log))
 	main.start_run()
 	main._end_card()
 	new_round(3202, 5)
@@ -3380,7 +3436,7 @@ func run_all() -> void:
 	main.hud.toast_log.clear()
 	land_at(0.3, 0.0)
 	main._finish_round(false)
-	check(CAR.count(SV.data, SC.STANDARD) == 2 and main.hud.toast_log.any(func(t): return t.contains("2/3")), "the daily approach counts the same way (2/3)")
+	check(CAR.count(SV.data, SC.STANDARD) == 2 and main.hud.toast_log.any(func(t): return t.contains("2/4")), "the daily approach counts the same way (2/4)")
 	main.mode = MAIN.FREE
 	main._show_menu()
 	# the instructor lesson: pay, one landing, counts double
@@ -3399,6 +3455,11 @@ func run_all() -> void:
 	check(not main._lesson_active, "(the lesson is used up)")
 	main._death_time = Time.get_ticks_msec() / 1000.0 - 1.0
 	main._continue_from_over()
+	var lesson_data_32: Dictionary = SV.default_data()
+	CAR.add_practice(lesson_data_32, SC.STANDARD, int(tn.lesson_credit))
+	check(CAR.count(lesson_data_32, SC.STANDARD) == 2 and CAR.count(lesson_data_32, SC.STANDARD) * 2 == CAR.needed(), "an instructor lesson counts double: two lessons fill one type (%d of %d after one)" % [CAR.count(lesson_data_32, SC.STANDARD), CAR.needed()])
+	CAR.add_practice(lesson_data_32, SC.STANDARD, int(tn.lesson_credit))
+	check(CAR.count(lesson_data_32, SC.STANDARD) == CAR.needed(), "...the second lesson fills it")
 	# a lesson you can't pay for
 	SV.data["coins"] = 3
 	main._on_menu_action("career")
@@ -3408,16 +3469,16 @@ func run_all() -> void:
 	# the checkride lock says exactly why, with a practice button for each missing type
 	SV.data = SV.default_data()
 	SV.data["unlock_all"] = true
-	SV.data["proficiency"]["counts"] = {"0": 3, str(SC.SOFT_FIELD): 1}
+	SV.data["proficiency"]["counts"] = {"0": 4, str(SC.SOFT_FIELD): 1}
 	main._on_menu_action("back")
 	main._on_menu_action("career")
 	var inf_32: Dictionary = main.career_info()
-	check(inf_32["status"] == "Needs endorsement:  Soft Field 1/3" and inf_32["lock"] == inf_32["status"] and not inf_32["book"], "locked: the screen says exactly why (%s)" % inf_32["status"])
+	check(inf_32["status"] == "Needs endorsement:  Soft Field 1/4" and inf_32["lock"] == inf_32["status"] and not inf_32["book"], "locked: the screen says exactly why (%s)" % inf_32["status"])
 	check(main.hud._cr_status.text == inf_32["status"] and main.hud._cr_rows[1]["btn"].kind == "primary" and main.hud._cr_rows[0]["btn"].kind == "secondary" and main.hud._cr_book.disabled, "...and highlights the practice button of the missing type only")
 	SV.data["proficiency"]["counts"] = {}
 	inf_32 = main.career_info()
-	check(inf_32["status"].contains("Normal Landing 0/3") and inf_32["status"].contains("Soft Field 0/3"), "...listing every missing type with its count (%s)" % inf_32["status"])
-	SV.data["proficiency"]["counts"] = {"0": 3, str(SC.SOFT_FIELD): 3}
+	check(inf_32["status"].contains("Normal Landing 0/4") and inf_32["status"].contains("Soft Field 0/4"), "...listing every missing type with its count (%s)" % inf_32["status"])
+	SV.data["proficiency"]["counts"] = {"0": 4, str(SC.SOFT_FIELD): 4}
 	SV.data["coins"] = 5
 	inf_32 = main.career_info()
 	check(inf_32["lock"].begins_with("Examiner fee") and not inf_32["book"], "endorsed but broke: the lock names the fee (%s)" % inf_32["lock"])

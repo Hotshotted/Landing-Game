@@ -23,16 +23,13 @@ var sim_step := 0.008
 # ---------- Camera ----------
 ## Camera tilt looking down onto the field, so the runway's top surface shows as a band.
 var camera_tilt_deg := 9.0
-## Every approach starts framed to show the plane and the whole runway (the width needed, capped here) and
-## zooms smoothly in as the plane gets closer, reaching view_width_low (the close flare framing) once the plane
-## is zoom_close_distance from the aim markers. A low altitude also forces the close framing (none at the height the
-## approach started from, fully close at zoom_low_altitude).
-var view_width_low := 38.0
-var view_width_full_max := 1500.0
-var zoom_close_distance := 80.0
-var zoom_low_altitude := 3.0
+## The camera stays close on the plane for the whole approach (no zoom-out): this wide, with the plane at plane_screen_x and the
+## rest of the width as look-ahead room, so obstacles on short final are large. The approach profile strip shows the whole approach.
+## Only when the next obstacle ahead would be just off the right edge does the view pull back (at most this many times the width).
+var view_width_low := 46.0
+var cam_pullback_max := 1.3
 ## Where the plane sits across the screen in the close framing (0 = left edge, 1 = right edge).
-var plane_screen_x := 0.26
+var plane_screen_x := 0.22
 ## Where the ground sits up from the bottom of the screen, close framing / wide framing.
 var ground_screen_y := 0.2
 var ground_screen_y_wide := 0.38
@@ -174,7 +171,7 @@ var instrument_dev_seconds := 2.5
 
 # ---------- Career ----------
 ## Practice landings that meet the standard to fill one landing type's proficiency meter.
-var proficiency_needed := 3
+var proficiency_needed := 4
 ## Landings in a checkride (drawn at random from the rank's types).
 var ride_landings := 3
 ## Examiner fee in coins for the checkride to rank r: exam_fee_base x exam_fee_growth ^ (r - 1). Failing loses it.
