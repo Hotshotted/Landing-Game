@@ -157,7 +157,8 @@ srv.listen(0, async () => {
       await page.waitForTimeout(250);
     }
     marks.resume = await nowSec();
-    await page.waitForTimeout(7000);
+    // (the recorder runs slower than real time under throttling: wait until it has captured enough seconds after Resume, so the window is never empty)
+    for (let w = 0; w < 120 && (await nowSec()) < marks.resume + 6; w++) await page.waitForTimeout(500);
     marks.end = await nowSec();
     const after = await state();
     await page.screenshot({ path: path.join(process.env.TMPDIR || '/tmp', 'web_audio_check.png') });
