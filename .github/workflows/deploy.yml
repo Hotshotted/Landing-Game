@@ -83,7 +83,22 @@ jobs:
           sed "s/__BUILD__/$SHORT/" web/cache_bust.snippet.html > build/cache_bust.html
           sed -i '/<head>/r build/cache_bust.html' build/web/index.html
           grep -c "version.txt" build/web/index.html
+          mkdir -p build/web/audio && cp assets/audio/loops/*.wav build/web/audio/   # (the page plays the music, engine, wind and rain loops natively)
+          grep -q "PWAudio" build/web/index.html
+          ! grep -q '\$GODOT_' build/web/index.html
           ls -la build/web
+
+      # The exported game, loaded in headless Chrome under a 4x CPU slowdown (like a phone), tapped like a phone, and RECORDED at
+      # the speakers: fails on silence, clicks, dropouts, repeated buffers, clipping, sound in the background, or any gameplay
+      # sound peaking above the music (tools/web_audio_check.js).
+      - name: Web audio check
+        timeout-minutes: 12
+        shell: bash
+        run: |
+          CHROME=$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser)
+          echo "using $CHROME"
+          npm install --no-save --no-audit --no-fund --prefix "$RUNNER_TEMP/pw" playwright-core
+          THROTTLE=4 NODE_PATH="$RUNNER_TEMP/pw/node_modules" node tools/web_audio_check.js build/web "$CHROME" | tee audio_check.log
 
       - uses: actions/upload-pages-artifact@v3
         with:

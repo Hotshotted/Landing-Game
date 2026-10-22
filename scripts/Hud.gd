@@ -1004,6 +1004,13 @@ func _pz_group() -> Control:
 func set_pause_button(on: bool) -> void:
 	_pause_btn.visible = on and not _pause_on
 
+## Where the pause menu's first button (RESUME) is, in viewport pixels (the audio check taps it).
+func resume_center() -> Vector2:
+	for c in _pz_main.get_children():
+		if c is UiButton:
+			return (c as UiButton).global_position + (c as UiButton).size * 0.5
+	return Vector2(540, 670)
+
 func pause_button_rect() -> Rect2:
 	return Rect2(_pause_btn.global_position, _pause_btn.size)
 

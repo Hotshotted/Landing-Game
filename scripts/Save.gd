@@ -8,7 +8,7 @@ extends RefCounted
 ## 2 = this one (eight ranks, proficiency meters, pink slips). A document from a NEWER build is
 ## kept as it is (unknown keys survive), and anything unreadable falls back to a fresh save instead of crashing.
 
-const VERSION := 3
+const VERSION := 4
 ## Version 1 had six ranks (Student, Private, Instrument, Commercial, CFI, Airline); where they sit on the eight-rank ladder.
 const RANK_MAP_V1: Array[int] = [0, 3, 4, 5, 6, 7]
 const OLD_PATH := "user://greaser.cfg"
@@ -40,7 +40,7 @@ static func default_data() -> Dictionary:
 		"owned_paint": [0],
 		"owned_gear": [0],
 		"owned_planes": [],      # aircraft bought with coins (they have no rental fee); a rank unlocks the others to rent
-		"settings": {"sound": 1.0, "music": 0.5},
+		"settings": {"sound": 0.8, "music": 0.8},
 		"daily": {"day": -1, "best": 0, "tries": 0},   # the daily approach: which day, best score, attempts that day
 	}
 
@@ -135,11 +135,13 @@ static func migrate(d: Dictionary) -> Dictionary:
 	if v < 3 and not op.has(0):
 		op.append(0)           # (before rentals every pilot had the Cub: keep it)
 	out["owned_planes"] = op
-	var st: Dictionary = {"sound": 1.0, "music": 0.5}
+	var st: Dictionary = {"sound": 0.8, "music": 0.8}
 	var stin = d.get("settings", {})
 	if stin is Dictionary:
 		for k in st:
 			st[k] = clampf(float((stin as Dictionary).get(k, st[k])), 0.0, 1.0)
+	if v < 4:
+		st = {"sound": 0.8, "music": 0.8}      # (the mix is balanced for these: the music is the reference, no sound louder than it)
 	out["settings"] = st
 	for k in ["owned_paint", "owned_gear"]:
 		var own: Array = [0]

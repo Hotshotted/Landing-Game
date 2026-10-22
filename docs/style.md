@@ -60,9 +60,15 @@ All of it is drawn or moved by `Hud` / `UiBurst` from fixed pools: nothing is al
 in section 28, run the animations by hand).
 
 ## Audio
-Everything is synthesised at start-up (no audio files). Interface: tap (secondary), back (ghost), confirm (primary / gold), deny (danger), page, whoosh, stamp, coin, fanfare, trombone.
-Flight: a loop per engine (Cub, 172, twin with two engines beating, jet whine; the glider has none), wind that follows airspeed and rain; tyre skid and thud at touchdown.
-Music: a menu pad and a brighter flying pad on the same 12 s grid crossfade over 1.2 s; a heartbeat layer builds on the final approach and stays under KEEP FLYING while a pot is at stake.
+**Direction (shared with Pattern-Control): soft, satisfying and musical, in the spirit of Mini Metro and Alto's Adventure.**
+- **Waveforms and key:** sines (a touch of triangle for the muted thuds) and gently filtered noise, nothing above about 4 kHz. Every pitched sound is in **C major pentatonic** (C D E G A): the music (C, Am, F, G), the landing / streak / cash-out chimes (seven steps up the scale), the coin plinks, the trombone, the fanfare. Nothing is pitch-shifted to a new note.
+- **Soft envelopes:** every sound fades in and out (raised cosine), a short shared "room" is baked into chimes and the music's arpeggio.
+- **Mix:** the music is the reference. UI sounds peak at or below 0.4 of it, gameplay sounds below 0.63. Engines are **low, quiet beds** (G1 for the Cub, A1 for the 172, C2 and a hair above for the twin, a soft rush with a faint G3 for the jet, none for the glider), wind and rain are soft low-passed air. The glider has no engine; the beds follow the flight by level only.
+- **Pre-rendered:** nothing is synthesised at run time. `scripts/SfxSynth.gd` is the recipe; `tools/render_audio.gd` bakes it into 44.1 kHz 16-bit mono WAVs in `assets/audio/` (one-shots) and `assets/audio/loops/` (calm, hot, tense music layers; four engine beds; wind; rain), committed; the smoke test fails if they are stale. One-shots take a free player from a pool of 8, so a sounding one is never cut off.
+- **Buses:** `SFX`, `Music` and `Ambience` and the Master hard limiter (-1 dB) are defined in `default_bus_layout.tres`; no bus is ever created at run time (that silences the single-threaded web export). The sound slider drives SFX and Ambience, the music slider Music; both default to 0.8.
+- **Loops on the web:** the loading page (`PWAudio` in `web/shell.html`) fetches the loops (copied next to the page by CI) and plays them as native, gapless `AudioBufferSource` loops off the main thread, through a compressor-limiter; the game only sends each layer's level. Elsewhere (the editor, the tests) they are ordinary looping players.
+- **Background:** on `visibilitychange`, `pagehide` and `blur` the page suspends every `AudioContext`, even before the game loads; the game mutes the Master bus and pauses the run. Sound stays off when the page comes back until the player taps Resume (or, on a menu, anywhere).
+- **CI:** `tools/web_audio_check.js` loads the exported game in headless Chrome under a 4x CPU slowdown, taps it like a phone and records what reaches the speakers. It fails on silence, clicks (discontinuities), dropouts, repeated buffers, clipping, any sound while the page is hidden or before Resume, or a gameplay sound peaking above the music.
 
 ## App icon, splash, loading
 `icon.svg` (a Cessna with Whiskers' ears landing, PAPI lights top left, sun top right) is the source of `icons/icon-512.png`, `icon-192.png`, `apple-touch-icon.png`.

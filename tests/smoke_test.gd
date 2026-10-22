@@ -2661,7 +2661,7 @@ func run_all() -> void:
 	check(main.hud._pz_settings.visible and main.hud._pz_sliders.has("sound") and main.hud._pz_sliders.has("music"), "Settings has sound and music volume sliders")
 	main.hud._pz_sliders["sound"].value = 0.4
 	main.hud._pz_sliders["music"].value = 0.0
-	var si: int = AudioServer.get_bus_index("Sfx")
+	var si: int = AudioServer.get_bus_index("SFX")
 	var mi: int = AudioServer.get_bus_index("Music")
 	check(is_equal_approx(SV.data["settings"]["sound"], 0.4) and absf(AudioServer.get_bus_volume_db(si) - linear_to_db(0.4)) < 0.1 and AudioServer.is_bus_mute(mi), "...they set the Sfx / Music bus volumes (and are saved)")
 	main.hud._pz_sliders["sound"].value = 1.0
@@ -2796,7 +2796,7 @@ func run_all() -> void:
 	main._on_hangar_pick("plane_buy", PL.C172)
 	check(main.available_planes().has(PL.C172) and main.plane_id == PL.C172 and SV.data["coins"] == 30 and SV.data["owned_planes"].has(PL.C172), "buying the 172 unlocks it and you fly it")
 	var kept: Dictionary = SV.migrate(SV.data)
-	check(kept["owned_planes"].has(PL.C172) and kept["settings"]["sound"] == 1.0, "bought aircraft survive the save (and the settings have defaults)")
+	check(kept["owned_planes"].has(PL.C172) and kept["settings"]["sound"] == 0.8, "bought aircraft survive the save (and the settings have defaults)")
 	check(SV.migrate({"version": 2, "coins": 5})["owned_planes"] == [PL.CUB], "an older save keeps the Cub it always had")
 	SV.data["unlock_all"] = true
 	SV.data["owned_planes"] = []
@@ -3054,9 +3054,9 @@ func run_all() -> void:
 	main.landings = 2
 	main.pot = 300
 	main._enter_choice()
-	check(main.music.tension() >= 0.0 and main.music._tension_goal >= 0.5 and hud29._ch_icon != null and hud29._ch_card_ok(), "the choice screen is a card with the pot icon, and the heartbeat comes in (%.1f)" % main.music._tension_goal)
+	check(main.sfx.tension() >= 0.0 and main.sfx._tension_goal >= 0.5 and hud29._ch_icon != null and hud29._ch_card_ok(), "the choice screen is a card with the pot icon, and the heartbeat comes in (%.1f)" % main.sfx._tension_goal)
 	main._show_menu()
-	check(main.music._tension_goal == 0.0, "the menu is calm again")
+	check(main.sfx._tension_goal == 0.0, "the menu is calm again")
 	var bar_29 := UiBar.new()
 	bar_29.color = Color.RED
 	check(bar_29.color == Color.RED, "(UiBar is a drop-in for ColorRect)")
@@ -3069,43 +3069,168 @@ func run_all() -> void:
 	var n30 := nodes()
 	var SFX30 = load("res://scripts/Sfx.gd")
 	var sfx30 = main.sfx
-	check(sfx30._streams.size() == 17 and sfx30._streams[SFX30.PAGE].get_length() > 0.2, "every sound in the list has a stream (%d)" % sfx30._streams.size())
-	var seamless_30 := true
-	for k_30 in [0, 1, 2, 4]:
-		var w_30: AudioStreamWAV = sfx30._engine_streams[k_30]
-		seamless_30 = seamless_30 and w_30 != null and w_30.loop_mode == AudioStreamWAV.LOOP_FORWARD and w_30.loop_end * 2 == w_30.data.size()
-	check(seamless_30 and sfx30._engine_streams[3] == null, "the engines (Cub, 172, twin, jet) are whole-cycle loops; the glider has none")
+	# ---- the sound: pre-rendered, in key, soft, quiet, gapless, held in the background ----
+	var all_src_au := ""
+	for f_30_au in DirAccess.get_files_at("res://scripts"):
+		if f_30_au.ends_with(".gd") and f_30_au != "SfxSynth.gd":
+			all_src_au += FileAccess.get_file_as_string("res://scripts/" + f_30_au)
+	check(not all_src_au.contains("encode_s16") and not all_src_au.contains("AudioStreamGenerator") and not all_src_au.contains("AudioStreamWAV.new()") and not FileAccess.file_exists("res://scripts/Music.gd"), "nothing is synthesised at run time: only SfxSynth.gd (run offline) writes samples")
+	check(not all_src_au.contains("add_bus("), "no bus is ever created at run time")
+	var layout_au := FileAccess.get_file_as_string("res://default_bus_layout.tres")
+	check(layout_au.contains("&\"SFX\"") and layout_au.contains("&\"Music\"") and layout_au.contains("&\"Ambience\"") and layout_au.contains("AudioEffectHardLimiter"), "every bus (SFX, Music, Ambience) and the Master limiter are defined in default_bus_layout.tres")
+	var buses_ok_au := true
+	for bn_au in ["SFX", "Music", "Ambience"]:
+		var bi_au := AudioServer.get_bus_index(bn_au)
+		buses_ok_au = buses_ok_au and bi_au >= 0 and AudioServer.get_bus_send(bi_au) == &"Master"
+	check(buses_ok_au and AudioServer.get_bus_effect_count(0) >= 1, "...and they exist, sending to Master, from the first frame")
+	# the files: every sound is a committed 44.1 kHz 16-bit mono WAV
+	var wav_names_au: Array[String] = []
+	for nm_30_au in SFX30.NAMES:
+		if nm_30_au == "chime" or nm_30_au == "coin":
+			for k_30_au in SFX30.STEPS:
+				wav_names_au.append("res://assets/audio/%s_%d.wav" % [nm_30_au, k_30_au])
+		else:
+			wav_names_au.append("res://assets/audio/%s.wav" % nm_30_au)
+	for l_30_au in SFX30.LAYERS:
+		wav_names_au.append("res://assets/audio/loops/%s.wav" % l_30_au)
+	var fmt_ok_au := true
+	var fmt_bad_au := []
+	for wf_au in wav_names_au:
+		var wb_au := FileAccess.get_file_as_bytes(wf_au)
+		var good_au := wb_au.size() > 1000 and wb_au.slice(0, 4).get_string_from_ascii() == "RIFF" and wb_au.decode_u16(20) == 1 and wb_au.decode_u16(22) == 1 and wb_au.decode_u32(24) == 44100 and wb_au.decode_u16(34) == 16
+		if not good_au:
+			fmt_ok_au = false
+			fmt_bad_au.append(wf_au)
+	check(fmt_ok_au and wav_names_au.size() == 38, "all %d sound files are 44.1 kHz 16-bit mono WAVs %s" % [wav_names_au.size(), str(fmt_bad_au)])
+	# the committed files are exactly what the recipe renders (re-run tools/render_audio.gd after editing SfxSynth.gd)
+	var RENDER = load("res://tools/render_audio.gd")
+	var synth = SfxSynth.new()
+	synth.rate = 44100
+	var stale_au := []
+	var clips_30_au: Dictionary = synth.clips()
+	for ck_au in clips_30_au:
+		if RENDER.wav_bytes(clips_30_au[ck_au], 44100) != FileAccess.get_file_as_bytes("res://assets/audio/%s.wav" % ck_au):
+			stale_au.append(ck_au)
+	var loops_30_au: Dictionary = synth.loops()
+	for lk_au in loops_30_au:
+		if RENDER.wav_bytes(loops_30_au[lk_au], 44100) != FileAccess.get_file_as_bytes("res://assets/audio/loops/%s.wav" % lk_au):
+			stale_au.append(lk_au)
+	check(stale_au.is_empty() and clips_30_au.size() == 29 and loops_30_au.size() == 9, "the committed WAVs are current (%d clips, %d loops; stale_au: %s)" % [clips_30_au.size(), loops_30_au.size(), str(stale_au)])
+	# analysis helpers
+	var dec_au := func(path: String) -> PackedFloat32Array:
+		var d_au := FileAccess.get_file_as_bytes(path)
+		var out_au := PackedFloat32Array()
+		out_au.resize((d_au.size() - 44) / 2)
+		for i in out_au.size():
+			out_au[i] = d_au.decode_s16(44 + i * 2) / 32768.0
+		return out_au
+	var peak_of_au := func(x_au: PackedFloat32Array) -> float:
+		var m_au := 0.0
+		for v_au in x_au:
+			m_au = maxf(m_au, absf(v_au))
+		return m_au
+	var gz_au := func(x_au: PackedFloat32Array, f_au: float, n: int) -> float:
+		var w_au := TAU * f_au / 44100.0
+		var c_au := 2.0 * cos(w_au)
+		var s1_au := 0.0
+		var s2_au := 0.0
+		for i in n:
+			var s0_au := x_au[i] + c_au * s1_au - s2_au
+			s2_au = s1_au
+			s1_au = s0_au
+		return (s1_au * s1_au + s2_au * s2_au - c_au * s1_au * s2_au) * 2.0 / n
+	var env_bad_au := []
+	var hf_bad_au := []
+	var peaks_bad_au := []
+	var calm_au: PackedFloat32Array = dec_au.call("res://assets/audio/loops/calm.wav")
+	var music_peak_au: float = peak_of_au.call(calm_au)
+	var ui_au := ["tap", "back", "confirm", "deny", "page", "sign", "whoosh", "squeak", "skid"]
+	for wf_au in wav_names_au:
+		if wf_au.contains("/loops/"):
+			continue
+		var x_au: PackedFloat32Array = dec_au.call(wf_au)
+		var pk_au: float = peak_of_au.call(x_au)
+		var head_au := 0.0
+		for i in 88:
+			head_au = maxf(head_au, absf(x_au[i]))
+		var tail_au := 0.0
+		for i in range(x_au.size() - 176, x_au.size()):
+			tail_au = maxf(tail_au, absf(x_au[i]))
+		if head_au > 0.35 * pk_au or tail_au > 0.03 * pk_au or absf(x_au[0]) > 0.02 * pk_au:
+			env_bad_au.append(wf_au.get_file())
+		var n2_au := mini(x_au.size(), 4000)
+		var tot_au := 0.0
+		for i in n2_au:
+			tot_au += x_au[i] * x_au[i]
+		var hf_au := 0.0
+		for f_au in [4200.0, 5000.0, 5800.0, 6600.0, 7400.0]:
+			hf_au += gz_au.call(x_au, f_au, n2_au)
+		if tot_au > 0.0 and hf_au / (tot_au + 1e-7) > 0.03:
+			hf_bad_au.append(wf_au.get_file())
+		var is_ui_au: bool = ui_au.has(wf_au.get_file().get_basename())
+		if pk_au > music_peak_au * (0.398 if is_ui_au else 0.631):
+			peaks_bad_au.append("%s %.3f" % [wf_au.get_file(), pk_au])
+	check(env_bad_au.is_empty(), "every sound starts and ends softly (no clicks): %s" % str(env_bad_au))
+	check(hf_bad_au.is_empty(), "everything is soft: next to no energy above 4 kHz %s" % str(hf_bad_au))
+	check(peaks_bad_au.is_empty(), "no sound is louder than the music: UI under 0.4 and gameplay under 0.63 of it (music peak %.2f) %s" % [music_peak_au, str(peaks_bad_au)])
+	# in key: every chime step is the note it claims (C major pentatonic), not a semitone off
+	var key_ok_au := true
+	for k_30_au in SFX30.STEPS:
+		var xc_au: PackedFloat32Array = dec_au.call("res://assets/audio/chime_%d.wav" % k_30_au)
+		var f0_au: float = SfxSynth.note_hz(5 + k_30_au)
+		var e0_au: float = gz_au.call(xc_au, f0_au, 8000)
+		key_ok_au = key_ok_au and e0_au > 4.0 * gz_au.call(xc_au, f0_au * 1.0595, 8000) and e0_au > 4.0 * gz_au.call(xc_au, f0_au / 1.0595, 8000)
+	check(key_ok_au and absf(SfxSynth.note_hz(5) - 523.25) < 0.1 and absf(SfxSynth.note_hz(4) - 440.0) < 0.1, "the chimes climb the C major pentatonic scale")
+	# loops: seamless, and the beds are quiet
+	var loops_ok_au := true
+	var quiet_ok_au := true
+	for l_30_au in SFX30.LAYERS:
+		var xl_au: PackedFloat32Array = dec_au.call("res://assets/audio/loops/%s.wav" % l_30_au)
+		var jump_au := absf(xl_au[0] - xl_au[xl_au.size() - 1])
+		var typ_au := 0.0
+		for i in range(1000, 5000):
+			typ_au = maxf(typ_au, absf(xl_au[i] - xl_au[i - 1]))
+		loops_ok_au = loops_ok_au and jump_au <= 3.0 * typ_au + 0.002 and (xl_au.size() == 264600 or xl_au.size() == 88200)
+		if l_30_au != "calm" and l_30_au != "hot" and l_30_au != "tense":
+			quiet_ok_au = quiet_ok_au and peak_of_au.call(xl_au) <= music_peak_au * 0.398
+	check(loops_ok_au, "every loop closes without a jump_au, and the music loops are 6 s, the beds 2 s")
+	check(quiet_ok_au, "the engine beds, wind and rain are low and quiet: under 0.4 of the music's peak")
+	# runtime: one-shots take free players, the beds follow the flight, the music crossfades
+	var plays0_au: int = sfx30.plays["squeak"]
+	for k_30_au in 3:
+		sfx30.play(SFX30.SQUEAK)
+	var sounding_au := 0
+	for p_30_au in sfx30._pool:
+		if p_30_au.playing:
+			sounding_au += 1
+	check(sfx30.plays["squeak"] == plays0_au + 3 and sounding_au >= 3, "one-shots each take a free player (%d sounding_au)" % sounding_au)
 	sfx30.set_loops(4, 0.8, 1.2, 0.5, 0.7)
 	for i in 30:
 		sfx30._process(0.05)
-	check(sfx30.engine_level() > 0.6 and sfx30._engine_player.volume_db > -30.0 and sfx30._rain_player.playing, "the jet's engine, the wind and the rain come up smoothly")
+	check(sfx30.engine_level() > 0.5 and sfx30._cur_db["engine_jet"] > -12.0 and sfx30._cur_db["engine_cub"] <= -75.0 and sfx30._players["rain"].playing, "the jet's bed, the wind and the rain come up smoothly; the other engines stay off")
 	sfx30.set_loops(3, 0.8, 1.0, 0.5, 0.0)
 	for i in 60:
 		sfx30._process(0.05)
-	check(sfx30.engine_level() < 0.01 and sfx30._engine_player.volume_db <= -80.0 and not sfx30._rain_player.playing, "the glider is silent (just wind) and the rain stops")
+	check(sfx30.engine_level() < 0.01 and sfx30._cur_db["wind"] > -12.0 and not sfx30._players["rain"].playing, "the glider has no engine (just wind) and the rain stops")
 	sfx30.loops_off()
 	for i in 60:
 		sfx30._process(0.05)
-	for k_30 in [SFX30.TAP, SFX30.BACK, SFX30.CONFIRM, SFX30.DENY, SFX30.PAGE, SFX30.STAMP, SFX30.COIN, SFX30.TROMBONE, SFX30.FANFARE, SFX30.SKID, SFX30.BOOM, SFX30.SIGN]:
-		sfx30.play(k_30, 1.0, -30.0)
-	for kind in ["ghost", "primary", "gold", "danger", "secondary"]:
-		main._on_button_down(kind)
-	check(true, "buttons play their own sounds: back, confirm, deny, tap")
-	var mus_30 = main.music
-	mus_30.set_mood(0.0)
+	for kind_au in ["ghost", "primary", "gold", "danger", "secondary"]:
+		main._on_button_down(kind_au)
+	sfx30.set_mood(0.0)
 	for i in 40:
-		mus_30._process(0.05)
-	mus_30.set_mood(1.0)
+		sfx30._process(0.05)
+	var menu_calm_au: float = sfx30._cur_db["calm"]
+	sfx30.set_mood(1.0)
 	for i in 12:
-		mus_30._process(0.05)
-	var mid_db_30: float = mus_30._player.volume_db
-	var mid_db2_30: float = mus_30._player2.volume_db
+		sfx30._process(0.05)
+	var mid_hot_au: float = sfx30._cur_db["hot"]
 	for i in 40:
-		mus_30._process(0.05)
-	check(mid_db_30 > -40.0 and mid_db2_30 > -40.0 and mus_30._player.volume_db < -60.0 and mus_30._player2.volume_db > -16.0, "the music crossfades between the menu pad and the flight pad (mid %.0f / %.0f dB)" % [mid_db_30, mid_db2_30])
-	mus_30.set_mood(0.0)
+		sfx30._process(0.05)
+	check(menu_calm_au < sfx30._cur_db["calm"] and mid_hot_au > -80.0 and sfx30._cur_db["hot"] > mid_hot_au - 1.0 and sfx30.mood() == 1.0, "the music crossfades from the menu to the flying mood (calm_au %.0f -> %.0f dB, the arpeggio comes in)" % [menu_calm_au, sfx30._cur_db["calm"]])
+	sfx30.set_mood(0.0)
 	for i in 40:
-		mus_30._process(0.05)
+		sfx30._process(0.05)
 	# the heartbeat builds on the final approach
 	main.start_run()
 	main._end_card()
@@ -3117,12 +3242,38 @@ func run_all() -> void:
 	main.aircraft.y = main.airfield.ground_y(main.aircraft.x) + 6.0
 	for i in 40:
 		main._update_audio(0.1)
-	check(main._final_tension > 0.3 and mus_30._tension_goal > 0.3 and mus_30._mood_goal == 1.0, "tension builds on the final approach (%.2f) and the flight mood is on" % main._final_tension)
+	check(main._final_tension > 0.3 and sfx30._tension_goal > 0.3 and sfx30._mood_goal == 1.0, "tension builds on the final approach (%.2f) and the flight mood is on" % main._final_tension)
 	main.state = MAIN.MENU
 	for i in 60:
 		main._update_audio(0.1)
-	check(mus_30._tension_goal < 0.01 and mus_30._mood_goal == 0.0, "...and drains away in the menus")
+	check(sfx30._tension_goal < 0.01 and sfx30._mood_goal == 0.0, "...and drains away in the menus")
 	main.sfx.loops_off()
+	# the background: hold everything, pause, and only a tap brings the sound back
+	main.start_run()
+	main._end_card()
+	main.state = MAIN.APPROACH
+	main._background()
+	check(AudioServer.is_bus_mute(0) and sfx30.held and main._paused_run and main._audio_hold, "the page goes to the background: the Master bus is muted, the run pauses")
+	main._foreground()
+	check(AudioServer.is_bus_mute(0) and main._audio_hold, "...and back in the foreground it stays muted until the player taps")
+	main._page_hidden = true
+	main._release_audio()
+	check(AudioServer.is_bus_mute(0), "(a tap while the page is still hidden does nothing)")
+	main._page_hidden = false
+	main._on_pause_action("resume")
+	check(not AudioServer.is_bus_mute(0) and not sfx30.held and not main._audio_hold and not main._paused_run, "Resume brings the sound back and the game running")
+	main._hide_pause_ui()
+	main._skip_frames = 0
+	main._show_menu()
+	# the page: native loops, contexts suspended on visibilitychange / pagehide / blur
+	var shell_au := FileAccess.get_file_as_string("res://web/shell.html")
+	var names_ok_au := true
+	for l_30_au in SFX30.LAYERS:
+		names_ok_au = names_ok_au and shell_au.contains("'%s'" % l_30_au)
+	check(shell_au.contains("PWAudio") and shell_au.contains("createBufferSource") and shell_au.contains("loop = true") and names_ok_au, "the loading page plays every loop (music, engines, wind, rain) as a native gapless AudioBufferSource")
+	check(shell_au.contains("visibilitychange") and shell_au.contains("pagehide") and shell_au.contains("'blur'") and shell_au.contains("suspend()") and shell_au.contains("__pwRelease"), "the page suspends every AudioContext on visibilitychange, pagehide and blur, even before the game loads, and resumes only on a tap")
+	check(FileAccess.file_exists("res://tools/web_audio_check.js") and FileAccess.get_file_as_string("res://.github/workflows/deploy.yml").contains("web_audio_check.js"), "CI records the exported game in headless Chrome under CPU throttling")
+	check(SV.default_data()["settings"]["sound"] == 0.8 and SV.default_data()["settings"]["music"] == 0.8 and SV.migrate({"version": 3, "settings": {"sound": 1.0, "music": 0.5}})["settings"]["music"] == 0.8, "the default volumes are 0.8, and older saves get them")
 	# icon, splash, boot settings
 	var splash := png_size("res://assets/splash.png")
 	var icon512 := png_size("res://icons/icon-512.png")

@@ -14,7 +14,8 @@ var airfield: Airfield
 var aircraft: Aircraft
 var fx: Fx
 var sfx: Sfx
-var music: Music
+var _page_hidden := false       # the page is in the background (web) or the window lost focus
+var _audio_hold := false        # the sound is held silent until the player taps (Resume, or any tap on a menu)
 var hud: Hud
 var wind := Wind.new()
 var tune_panel: TunePanel
@@ -143,8 +144,6 @@ func _ready() -> void:
 	add_child(fx)
 	sfx = Sfx.new()
 	add_child(sfx)
-	music = Music.new()
-	add_child(music)
 	fog = FogOverlay.new()
 	add_child(fog)
 	hud = Hud.new()
@@ -153,6 +152,7 @@ func _ready() -> void:
 	Style.detect_safe(get_viewport().get_visible_rect().size)
 	hud.apply_safe()
 	hud.ui_sound.connect(_on_ui_sound)
+	sfx.page_hidden.connect(_on_page_hidden)
 	hud.plane_step.connect(_on_plane_step)
 	hud.menu_action.connect(_on_menu_action)
 	hud.choice.connect(_on_choice)
@@ -670,13 +670,16 @@ var _event_frame := -100
 func _notification(what: int) -> void:
 	match what:
 		NOTIFICATION_APPLICATION_FOCUS_OUT, NOTIFICATION_APPLICATION_PAUSED, NOTIFICATION_WM_WINDOW_FOCUS_OUT:
-			pause_game()          # losing focus pauses the run (you resume it yourself)
+			if sfx != null:
+				_background()     # silence everything (held until the player taps Resume) and pause a run in progress
 			if not _suspended:
 				_suspended = true
 				_paused_since_ms = Time.get_ticks_msec()
 				_event = "window went to the background"
 				_event_frame = Engine.get_process_frames()
 		NOTIFICATION_APPLICATION_FOCUS_IN, NOTIFICATION_APPLICATION_RESUMED, NOTIFICATION_WM_WINDOW_FOCUS_IN:
+			if sfx != null:
+				_foreground()
 			if _suspended:
 				_suspended = false
 				_paused_total_ms += Time.get_ticks_msec() - _paused_since_ms
@@ -684,6 +687,48 @@ func _notification(what: int) -> void:
 				aircraft.clear_input()   # (the drag that piled up while away must not jerk the nose)
 				_event = "window came back"
 				_event_frame = Engine.get_process_frames()
+
+# ---------- background audio ----------
+
+## The page was hidden, blurred or the phone locked: silence everything and pause a run in progress. Nothing resumes by itself:
+## the player comes back and taps Resume (or, on a menu, anywhere).
+func _background() -> void:
+	_page_hidden = true
+	if not _audio_hold:
+		_audio_hold = true
+		sfx.hold()
+	pause_game()
+	_publish_state()
+
+func _foreground() -> void:
+	_page_hidden = false
+	_publish_state()
+
+## The player is back and has tapped (Resume, or any tap on a menu): sound may run again.
+func _release_audio() -> void:
+	if _page_hidden:
+		return
+	if _audio_hold:
+		_audio_hold = false
+		sfx.release()
+		if OS.has_feature("web"):
+			JavaScriptBridge.eval("window.__pwRelease && window.__pwRelease()")
+	_publish_state()
+
+## The page tells us about visibility (a hidden tab, a locked phone) in case the engine's own focus notifications do not arrive.
+func _on_page_hidden(hidden: bool) -> void:
+	if hidden and not _page_hidden:
+		_background()
+	elif not hidden and _page_hidden:
+		_foreground()
+
+## For the automated audio check (tools/web_audio_check.js): what the game is doing and where its Resume button is.
+func _publish_state() -> void:
+	if not OS.has_feature("web"):
+		return
+	var rc := hud.resume_center()
+	var sc := float(JavaScriptBridge.eval("window.innerWidth")) / maxf(get_viewport().get_visible_rect().size.x, 1.0)
+	JavaScriptBridge.eval("window.__pw = {paused: %s, muted: %s, held: %s, resume: [%.1f, %.1f]}" % [str(_paused_run).to_lower(), str(AudioServer.is_bus_mute(0)).to_lower(), str(_audio_hold).to_lower(), rc.x * sc, rc.y * sc])
 
 ## The part of this real frame (`raw` seconds) the simulation may use: 0 to skip it. However long the frame
 ## was, the simulation advances by at most max_frame_delta; a stall (a tab switch) is dropped, not simulated.
@@ -961,10 +1006,10 @@ func _touchdown() -> void:
 			hud.set_streak(streak, g0 == 0)
 		if g0 == 0:
 			fx.sparkle(Vector3(px, gy + 3.0, 1.0), streak - 1)
-			sfx.play(Sfx.CHIME, 1.0 + 0.1 * float(mini(streak, 8)), -4.0)
+			sfx.play_step(Sfx.CHIME, mini(streak, 8) - 1, -2.0)
 		hud.set_hint("")
 		if g <= 1:
-			sfx.play(Sfx.CHIME, 1.0 + 0.12 * float(1 - g), -6.0)
+			sfx.play_step(Sfx.CHIME, 1 - g, -3.0)
 	var power := clampf(0.25 + sink / 5.0, 0.2, 1.0)
 	fx.smoke(wheels, power, airfield.smoke_color())
 	if airfield.surface == Airfield.ASPHALT or airfield.surface == Airfield.DECK:
@@ -1067,7 +1112,7 @@ func _credit_proficiency(lesson: bool) -> Dictionary:
 	hud.toast(text, Color(0.55, 1.0, 0.65))
 	if before < Career.needed() and n >= Career.needed() and Career.endorsed(Save.data, tgt):
 		hud.toast("Endorsed! Book the %s checkride in CAREER" % Career.rank_name(tgt), Color(1.0, 0.85, 0.35))
-		sfx.play(Sfx.CHIME, 1.3, 0.0)
+		sfx.play_step(Sfx.CHIME, 4)
 	Save.store()
 	_refresh_menu_buttons()
 	return {"n": n, "gain": n - before}
@@ -1265,12 +1310,14 @@ func _update_fog() -> void:
 		vis = lerpf(airfield.vis_end, 700.0, _instr_open * _instr_open)      # the runway appears at minimums
 	fog.set_fog(true, _plane_screen_x(), vs.x / maxf(_cam_w, 1.0), vs.x, minf(Tuning.fog_start, vis * 0.4), vis, col, strength, haze)
 
+var _coin_step := 0              # each coin that reaches the counter plinks one note higher
+var _coin_ms := 0
 var _tension_base := 0.0         # from the push-your-luck pot
 var _final_tension := 0.0        # builds on the final approach
 
 func _set_base_tension(v: float) -> void:
 	_tension_base = v
-	music.set_tension(maxf(_tension_base, _final_tension))
+	sfx.set_tension(maxf(_tension_base, _final_tension))
 
 ## Every frame: the engine, wind and rain loops follow the flight, the music mood follows the state, and the heartbeat builds
 ## on the final approach (and stays while a pot is at stake).
@@ -1288,12 +1335,12 @@ func _update_audio(dt: float) -> void:
 			sfx.set_loops(kind, 0.3 + 0.15 * g, 0.65 + 0.3 * g, 0.5 * g, wx_rain * 0.8)
 	else:
 		sfx.loops_off()
-	music.set_mood(1.0 if (state == APPROACH or state == ROLLOUT or state == CARD or state == CRASH or state == CHOICE or state == CASHOUT) else 0.0)
+	sfx.set_mood(1.0 if (state == APPROACH or state == ROLLOUT or state == CARD or state == CRASH or state == CHOICE or state == CASHOUT) else 0.0)
 	var goal := 0.0
 	if state == APPROACH and not _graded:
 		goal = smoothstep(0.55, 1.0, _closeness()) * 0.55
 	_final_tension = move_toward(_final_tension, goal, dt * 0.5)
-	music.set_tension(maxf(_tension_base, _final_tension))
+	sfx.set_tension(maxf(_tension_base, _final_tension))
 
 ## A finger went down on a button: its own sound by kind, and a light haptic.
 func _on_button_down(kind: String) -> void:
@@ -1316,7 +1363,12 @@ func _on_ui_sound(kind: String) -> void:
 		"trombone":
 			sfx.play(Sfx.TROMBONE, 1.0, -4.0)
 		"coin":
-			sfx.play(Sfx.COIN, 1.0 + rng.randf_range(-0.08, 0.2), -10.0)
+			var now_ms := Time.get_ticks_msec()
+			if now_ms - _coin_ms > 900:
+				_coin_step = 0
+			_coin_ms = now_ms
+			sfx.play_step(Sfx.COIN, _coin_step)
+			_coin_step += 1
 		"sign":
 			sfx.play(Sfx.SIGN, 1.0, -8.0)
 		"whoosh":
@@ -1342,7 +1394,10 @@ func _input(event: InputEvent) -> void:
 		return
 	# Browsers only allow vibration after a touch, and the first real call connects to the device's vibration
 	# service: make an imperceptible 1 ms pulse on the very first touch, not on the first landing.
+	if (event is InputEventScreenTouch and event.pressed) and (state == MENU or state == OVER or state == CARD):
+		_release_audio()          # (back from the background, on a menu: any tap brings the sound back)
 	if not _haptic_warmed and (event is InputEventScreenTouch or event is InputEventScreenDrag):
+		sfx.unlock()
 		_haptic_warmed = true
 		if not DebugFlags.off("haptic"):
 			Input.vibrate_handheld(1)
@@ -1587,7 +1642,7 @@ func _show_ride_result() -> void:
 		var lines := Career.unlock_lines(tgt)
 		var body := "This certifies that WHISKERS has shown the skill and judgement of a %s pilot and is awarded the rating.\n\n%s" % [Career.rank_name(tgt).to_lower(), "\n".join(lines)]
 		hud.show_certificate(Career.rank_name(tgt), body, date_text(today))
-		sfx.play(Sfx.CHIME, 1.3, 0.0)
+		sfx.play_step(Sfx.CHIME, 4)
 	else:
 		ride_passed = false
 		_over_kind = "ride_fail"
@@ -1772,7 +1827,7 @@ func _show_practice_result() -> void:
 			body = "%s\nProficiency  %d / %d%s" % [name_t, n, Career.needed(), "   (instructor lesson: counts double)" if _lesson_active else ""]
 			if Career.endorsed(Save.data, tgt):
 				body += "\n\nEvery landing type is ready: the instructor signs your endorsement for the %s checkride!" % Career.rank_name(tgt)
-				sfx.play(Sfx.CHIME, 1.3, 0.0)
+				sfx.play_step(Sfx.CHIME, 4)
 	else:
 		title = "NOT TO STANDARD"
 		var why: Array = verdict["fails"]
@@ -1954,7 +2009,7 @@ func _enter_choice() -> void:
 	_next_round = round_no + 1
 	hud.set_hint("")
 	hud.show_choice({"title": "LANDED!", "pot": pot, "next_mult": pot_multiplier(), "hint": _next_hint()})
-	sfx.play(Sfx.CHIME, 1.0, -6.0)
+	sfx.play_step(Sfx.CHIME, 0, -3.0)
 	_set_base_tension(clampf(0.5 + 0.1 * float(landings), 0.5, 1.0))      # the heartbeat comes in: the pot is on the line
 
 func _on_choice(kind: String) -> void:
@@ -1989,13 +2044,13 @@ func _step_cashout(dt: float) -> void:
 	var n := int(roundf(float(pot) * eased))
 	if n != _cash_shown:
 		if n / 5 != _cash_shown / 5 and p < 1.0:
-			sfx.play(Sfx.CHIME, 1.0 + 0.8 * p, -14.0)
+			sfx.play_step(Sfx.CHIME, int(p * 6.0), -8.0)
 		_cash_shown = n
 		hud.set_cash_count(n, 1.0 - p)
 	if p >= 1.0 and not _cash_done:
 		_cash_done = true
 		hud.set_cash_count(pot, 1.0)
-		sfx.play(Sfx.CHIME, 1.5, -2.0)
+		sfx.play_step(Sfx.CHIME, 6)
 		fx.sparkle(Vector3(aircraft.x, 6.0, 1.0), 4)
 		fx.sparkle(Vector3(aircraft.x + 6.0, 9.0, 1.0), 3)
 		hud.confetti_burst()
@@ -2057,6 +2112,7 @@ func _on_pause_action(id: String) -> void:
 			pause_game()
 		"resume":
 			resume_game()
+			_release_audio()
 		"settings":
 			hud.show_pause_settings(float(Save.data["settings"]["sound"]), float(Save.data["settings"]["music"]))
 		"settings_back":
@@ -2117,22 +2173,15 @@ func _on_volume_changed(kind: String, value: float) -> void:
 	Save.data["settings"][kind] = clampf(value, 0.0, 1.0)
 	_apply_volumes()
 
+## The SFX, Music and Ambience buses come from default_bus_layout.tres (loaded before the audio driver starts). They are NEVER
+## created here: adding a bus at run time silences the single-threaded web export.
 func _setup_audio() -> void:
-	for nm in ["Sfx", "Music"]:
-		if AudioServer.get_bus_index(nm) == -1:
-			AudioServer.add_bus()
-			var i := AudioServer.bus_count - 1
-			AudioServer.set_bus_name(i, nm)
-			AudioServer.set_bus_send(i, &"Master")
 	_apply_volumes()
 
 func _apply_volumes() -> void:
 	var st: Dictionary = Save.data["settings"]
-	var si := AudioServer.get_bus_index("Sfx")
-	var mi := AudioServer.get_bus_index("Music")
-	if si >= 0:
-		AudioServer.set_bus_volume_db(si, linear_to_db(maxf(float(st["sound"]), 0.0001)))
-		AudioServer.set_bus_mute(si, float(st["sound"]) <= 0.001)
-	if mi >= 0:
-		AudioServer.set_bus_volume_db(mi, linear_to_db(maxf(float(st["music"]), 0.0001)))
-		AudioServer.set_bus_mute(mi, float(st["music"]) <= 0.001)
+	for pair in [["SFX", float(st["sound"])], ["Ambience", float(st["sound"])], ["Music", float(st["music"])]]:
+		var idx := AudioServer.get_bus_index(pair[0])
+		if idx >= 0:
+			AudioServer.set_bus_volume_db(idx, linear_to_db(maxf(pair[1], 0.0001)))
+			AudioServer.set_bus_mute(idx, pair[1] <= 0.001)
